@@ -57,6 +57,8 @@ h1, h2, h3, p { margin: 0; } h1 { margin-top: 6px; font: 700 29px 'Space Grotesk
 body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #202020; }.dark-theme .brand-rail, .dark-theme .inbox-panel, .dark-theme .chat-panel { color: #f5f2f5; background: #202020; border-color: #383838; }.dark-theme .chat-area { background: #242424; }.dark-theme .chat-header, .dark-theme .message-input-wrap { border-color: #3e3e3e; }.dark-theme .message-input-wrap { background: #2b2b2b; }.dark-theme .message-input-wrap input { color: #fff; }
 @media (max-width: 680px) { .profile-menu { right: 12px; bottom: 70px; left: 12px; width: auto; }.settings-content { padding-right: 18px; padding-left: 18px; }.settings-header h2 { font-size: 18px; }.settings-row small { font-size: 10px; } }
 @media (max-width: 680px) {
+  #conversationList { width: 100%; }
+  #conversationList .conversation { display: flex; width: 100%; max-width: none; min-height: 76px; margin: 0; border-radius: 0; }
   body { background: #0d0f12; color: #f4f4f5; }
   .app-shell { width: 100%; min-height: 100vh; background: #0d0f12; }
   .brand-rail { display: none; }
