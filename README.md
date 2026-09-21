@@ -9,6 +9,7 @@
 - Signaling Server สำหรับแลกเปลี่ยน SDP Offer, SDP Answer และ ICE Candidate ผ่าน Socket.io
 - ปุ่ม Mute microphone, Turn off camera และ End call พร้อมหน้าต่าง call แบบ responsive
 - Express static server, health check และ Docker image สำหรับ cloud deployment
+- Turso database schema สำหรับ users, rooms, room members และ message history
 
 ## โครงสร้างและเทคโนโลยี
 
@@ -39,6 +40,17 @@ npm start
 ```powershell
 Invoke-WebRequest http://localhost:3000/health
 ```
+
+## Environment Variables สำหรับ Turso
+
+ตั้งค่าตัวแปรต่อไปนี้ใน Render Web Service เพื่อเปิดใช้งานการสร้าง schema ฐานข้อมูลอัตโนมัติ:
+
+```text
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
+```
+
+เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members` และ `messages` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
 
 ## Cloud Deployment ด้วย Docker
 

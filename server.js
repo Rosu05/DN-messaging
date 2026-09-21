@@ -2,6 +2,7 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
+const { initializeDatabase } = require('./db');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -83,6 +84,14 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`Networking demo is running on port ${port}`);
+async function startServer() {
+  await initializeDatabase();
+  httpServer.listen(port, '0.0.0.0', () => {
+    console.log(`Networking demo is running on port ${port}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error('Failed to initialize the database:', error);
+  process.exit(1);
 });
