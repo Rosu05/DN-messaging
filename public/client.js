@@ -28,6 +28,9 @@ const confirmPasswordField = document.getElementById('confirmPasswordField');
 const authSubmit = document.getElementById('authSubmit');
 const authSwitch = document.getElementById('authSwitch');
 const authError = document.getElementById('authError');
+const profileButton = document.getElementById('profileButton');
+const profileMenu = document.getElementById('profileMenu');
+const settingsModal = document.getElementById('settingsModal');
 
 let peerConnection = null;
 let localStream = null;
@@ -73,12 +76,44 @@ authSwitch.addEventListener('click', () => {
   authError.textContent = '';
 });
 
-document.getElementById('logoutButton').addEventListener('click', async () => {
+profileButton.addEventListener('click', () => {
+  const isOpen = profileMenu.classList.toggle('visible');
+  profileMenu.setAttribute('aria-hidden', String(!isOpen));
+});
+
+document.getElementById('settingsButton').addEventListener('click', () => {
+  profileMenu.classList.remove('visible');
+  profileMenu.setAttribute('aria-hidden', 'true');
+  settingsModal.classList.add('visible');
+  settingsModal.setAttribute('aria-hidden', 'false');
+});
+
+document.getElementById('settingsClose').addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', (event) => { if (event.target === settingsModal) closeSettings(); });
+document.getElementById('activeStatusToggle').addEventListener('change', (event) => {
+  document.getElementById('activeStatusLabel').textContent = event.target.checked ? 'เปิด' : 'ปิด';
+});
+document.querySelectorAll('input[name="theme"]').forEach((input) => input.addEventListener('change', (event) => {
+  document.body.classList.toggle('dark-theme', event.target.value === 'dark');
+}));
+
+document.getElementById('menuLogoutButton').addEventListener('click', logout);
+
+function closeSettings() {
+  settingsModal.classList.remove('visible');
+  settingsModal.setAttribute('aria-hidden', 'true');
+}
+
+async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   socket.disconnect();
   currentUser = null;
+  profileMenu.classList.remove('visible');
+  profileMenu.setAttribute('aria-hidden', 'true');
+  closeSettings();
   authScreen.classList.add('visible');
-});
+  authForm.reset();
+}
 
 async function bootstrapAuth() {
   const response = await fetch('/api/auth/me');
@@ -91,6 +126,8 @@ function enterApp(user) {
   const initials = user.username.slice(0, 1).toUpperCase();
   document.getElementById('currentUser').textContent = `Signed in as ${user.username}`;
   document.getElementById('railAvatar').textContent = initials;
+  document.getElementById('settingsAvatar').textContent = initials;
+  document.getElementById('settingsUsername').textContent = user.username;
   authScreen.classList.remove('visible');
   if (!socket.connected) socket.connect();
 }

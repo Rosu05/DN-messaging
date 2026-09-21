@@ -36,7 +36,7 @@
       <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
       <button class="rail-button" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i></button>
       <button class="rail-button" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
-      <div class="rail-bottom"><button class="rail-button" id="logoutButton" title="Log out" aria-label="Log out"><span class="mini-avatar" id="railAvatar">U</span></button></div>
+      <div class="rail-bottom"><button class="rail-button" id="profileButton" title="Profile" aria-label="Profile"><span class="mini-avatar" id="railAvatar">U</span></button></div>
     </aside>
 
     <section class="inbox-panel" aria-label="Conversations">
@@ -71,6 +71,29 @@
       </form>
     </section>
   </main>
+
+  <div class="profile-menu" id="profileMenu" aria-hidden="true">
+    <button type="button" class="profile-menu-item" id="settingsButton"><i class="fa-solid fa-gear"></i><span>การกำหนดลักษณะ</span></button>
+    <button type="button" class="profile-menu-item"><i class="fa-solid fa-font"></i><span>แก้ไขชื่อผู้ใช้</span></button>
+    <button type="button" class="profile-menu-item"><i class="fa-regular fa-comment-slash"></i><span>บัญชีที่ถูกจำกัด</span></button>
+    <button type="button" class="profile-menu-item danger" id="menuLogoutButton"><i class="fa-solid fa-arrow-right-from-bracket"></i><span>ออกจากระบบ</span></button>
+  </div>
+
+  <div class="settings-modal" id="settingsModal" aria-hidden="true">
+    <section class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <header class="settings-header"><h2 id="settingsTitle">การกำหนดลักษณะ</h2><button type="button" class="settings-close" id="settingsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <div class="settings-content">
+        <h3>บัญชี</h3>
+        <div class="settings-profile"><span class="settings-avatar" id="settingsAvatar">U</span><div><strong id="settingsUsername">User</strong><span>ดูโปรไฟล์ของคุณ</span></div></div>
+        <div class="settings-row"><i class="fa-solid fa-circle-half-stroke"></i><div><strong>สถานะกำลังใช้งาน: <span id="activeStatusLabel">เปิด</span></strong></div><label class="switch"><input type="checkbox" id="activeStatusToggle" checked><span></span></label></div>
+        <h3>การแจ้งเตือน</h3>
+        <div class="settings-row"><i class="fa-solid fa-volume-high"></i><div><strong>เสียงแจ้งเตือน</strong><small>ใช้เสียงเพื่อแจ้งเตือนคุณเกี่ยวกับข้อความเข้า, สายโทรเข้า, วิดีโอแชทเรียกเข้า และเสียงในแอพ</small></div><label class="switch"><input type="checkbox" checked><span></span></label></div>
+        <div class="settings-row"><i class="fa-solid fa-volume-xmark"></i><div><strong>ห้ามรบกวน</strong><small>ปิดการแจ้งเตือนในช่วงเวลาที่กำหนด</small></div><label class="switch"><input type="checkbox"><span></span></label></div>
+        <h3>โหมดมืด</h3>
+        <div class="theme-options"><label><span>ปิด</span><input type="radio" name="theme" value="light" checked></label><label><span>เปิด</span><input type="radio" name="theme" value="dark"></label><label><span>อัตโนมัติ<small>เราจะปรับการแสดงผลตามการกำหนดลักษณะระบบของอุปกรณ์โดยอัตโนมัติ</small></span><input type="radio" name="theme" value="auto"></label></div>
+      </div>
+    </section>
+  </div>
 
   <div class="call-modal" id="callModal" aria-hidden="true">
     <div class="call-stage" id="callStage">
