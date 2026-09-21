@@ -1,7 +1,7 @@
 const socket = io({ autoConnect: false });
-const roomId = 'networking-demo';
 let currentUser = null;
 let selectedContact = null;
+let activeRoomId = null;
 let isRegisterMode = false;
 const rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -188,8 +188,35 @@ function selectContact(contact) {
   selectedContact = contact;
   document.getElementById('chatAvatar').textContent = contact.username.slice(0, 2).toUpperCase();
   document.getElementById('chatContactName').textContent = contact.username;
-  document.getElementById('chatContactStatus').textContent = 'พร้อมเริ่มการสนทนา';
+  document.getElementById('chatContactStatus').textContent = contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+  clearChatArea();
   closeContacts();
+  activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
+  if (socket.connected) socket.emit('join-room', { peerId: contact.id });
+}
+
+function clearChatArea() {
+  chatArea.innerHTML = '<div class="date-divider"><span>Today</span></div>';
+}
+
+function renderConversationList(conversations) {
+  const container = document.getElementById('conversationList');
+  if (!conversations.length) {
+    container.innerHTML = '<div class="conversation-empty">ยังไม่มีประวัติแชท เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div>';
+    return;
+  }
+  container.innerHTML = conversations.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}"><span class="avatar violet">${person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.username)}</strong><span>${escapeHtml(person.lastText || 'เริ่มการสนทนา')}</span></span><time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
+  container.querySelectorAll('[data-conversation-id]').forEach((button) => button.addEventListener('click', async () => {
+    const response = await fetch('/api/contacts');
+    const result = await response.json();
+    const contact = result.friends.find((friend) => friend.id === button.dataset.conversationId);
+    if (contact) selectContact(contact);
+  }));
+}
+
+async function loadConversations() {
+  const response = await fetch('/api/conversations');
+  if (response.ok) renderConversationList((await response.json()).conversations);
 }
 
 function escapeHtml(value) {
@@ -222,29 +249,34 @@ function enterApp(user) {
   document.getElementById('settingsUsername').textContent = user.username;
   document.getElementById('noteAvatar').textContent = initials;
   refreshFriendRequestBadge();
+  loadConversations().catch(() => {});
   authScreen.classList.remove('visible');
   if (!socket.connected) socket.connect();
 }
 
-socket.on('connect', () => socket.emit('join-room', { roomId }));
+socket.on('connect', () => {
+  if (selectedContact) socket.emit('join-room', { peerId: selectedContact.id });
+});
 socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
-  if (participantCount > 1) showToast('Connected to the networking room');
+  document.getElementById('chatContactStatus').textContent = participantCount > 1 ? 'ออนไลน์อยู่' : 'ออฟไลน์';
 });
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
+socket.on('chat-history', (messages) => messages.forEach((message) => renderMessage(message)));
+socket.on('chat-error', ({ message }) => showToast(message));
 socket.on('peer-left', () => { if (callModal.classList.contains('visible')) endCall(false); });
 
 messageForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const text = messageInput.value.trim();
-  if (!text || !socket.connected) return;
-  socket.emit('chat-message', { roomId, text });
+  if (!text || !socket.connected || !selectedContact) return;
+  socket.emit('chat-message', { text });
   messageInput.value = '';
   messageInput.focus();
 });
 
 document.getElementById('heartButton').addEventListener('click', () => {
-  socket.emit('chat-message', { roomId, text: '❤️' });
+  if (socket.connected && selectedContact) socket.emit('chat-message', { text: '❤️' });
 });
 
 socket.on('chat-message', (message) => renderMessage(message));
@@ -265,7 +297,7 @@ async function startCall(mode) {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
     showLocalMedia();
     createPeerConnection();
-    socket.emit('call-user', { roomId, mode });
+    socket.emit('call-user', { mode });
     callStatus.textContent = 'Calling...';
     voiceStatus.textContent = 'Waiting for Alex to answer';
   } catch (error) {
@@ -278,7 +310,7 @@ socket.on('incoming-call', async ({ callerId, callerName, mode }) => {
   if (peerConnection) return;
   const accepted = window.confirm(`${callerName} is calling. Accept ${mode} call?`);
   if (!accepted) {
-    socket.emit('end-call', { roomId });
+    socket.emit('end-call');
     return;
   }
   activePeerId = callerId;
@@ -347,7 +379,8 @@ function createPeerConnection() {
 }
 
 function renderMessage(message) {
-  const isMine = message.senderId === socket.id;
+  const isMine = message.senderId === currentUser?.id;
+  if (!selectedContact) return;
   const row = document.createElement('div');
   row.className = `message-row${isMine ? ' mine' : ''}`;
   const bubble = document.createElement('div');
@@ -359,6 +392,7 @@ function renderMessage(message) {
   row.append(bubble, meta);
   chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
+  loadConversations().catch(() => {});
 }
 
 function formatTime(timestamp) { return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp)); }
@@ -367,7 +401,7 @@ function updateCallStatus(status) { callStatus.textContent = status; voiceStatus
 function showLocalMedia() { localVideo.srcObject = localStream; localVideo.classList.toggle('hidden', activeCallMode !== 'video'); remoteVideo.classList.toggle('hidden', activeCallMode !== 'video'); voicePlaceholder.classList.toggle('hidden', activeCallMode === 'video'); }
 
 function endCall(notifyPeer) {
-  if (notifyPeer && socket.connected) socket.emit('end-call', { roomId });
+  if (notifyPeer && socket.connected) socket.emit('end-call');
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
   peerConnection = null; localStream = null; activePeerId = null; isCaller = false;

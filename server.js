@@ -42,6 +42,18 @@ function publicUser(user) {
   return { id: user.id, username: user.username, email: user.email };
 }
 
+function directRoomId(firstUserId, secondUserId) {
+  return `direct:${[firstUserId, secondUserId].sort().join(':')}`;
+}
+
+function isUserOnline(userId) {
+  return [...io.sockets.sockets.values()].some((socket) => socket.data.userId === userId);
+}
+
+function contactView(user) {
+  return { ...publicUser(user), online: isUserOnline(user.id) };
+}
+
 function authenticatedUserId(request) {
   try {
     return verifyToken(getTokenFromCookie(request))?.userId || null;
@@ -142,9 +154,32 @@ app.get('/api/contacts', async (request, response) => {
         INNER JOIN friendships f ON f.user_id = u.id
         WHERE f.friend_id = ? AND f.status = 'pending' ORDER BY f.created_at DESC`, args: [userId]
     });
-    response.json({ friends: friends.rows.map(publicUser), suggestions: suggestions.rows.map(publicUser), requests: requests.rows.map(publicUser), requestCount: requests.rows.length });
+    response.json({ friends: friends.rows.map(contactView), suggestions: suggestions.rows.map(contactView), requests: requests.rows.map(contactView), requestCount: requests.rows.length });
   } catch (_error) {
     response.status(500).json({ error: 'Could not load contacts' });
+  }
+});
+
+app.get('/api/conversations', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    const result = await db.execute({
+      sql: `SELECT u.id, u.username, u.email FROM users u
+        INNER JOIN friendships f ON f.friend_id = u.id
+        WHERE f.user_id = ? AND f.status = 'accepted' ORDER BY u.username`,
+      args: [userId]
+    });
+    const rows = [];
+    for (const row of result.rows) {
+      const roomId = directRoomId(userId, row.id);
+      const latest = await db.execute({ sql: 'SELECT text AS last_text, created_at AS last_created_at FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 1', args: [roomId] });
+      rows.push({ ...contactView(row), lastText: latest.rows[0]?.last_text || '', lastCreatedAt: latest.rows[0]?.last_created_at || null });
+    }
+    rows.sort((first, second) => (second.lastCreatedAt || '').localeCompare(first.lastCreatedAt || ''));
+    response.json({ conversations: rows });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not load conversations' });
   }
 });
 
@@ -206,18 +241,25 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const roomForSocket = (requestedRoom) => requestedRoom === socket.data.roomId ? requestedRoom : socket.data.roomId;
+  const roomForSocket = () => socket.data.roomId;
 
-  socket.on('join-room', async ({ roomId }) => {
-    const safeRoomId = typeof roomId === 'string' && roomId.length <= 80 ? roomId : 'networking-demo';
+  socket.on('join-room', async ({ peerId }) => {
+    if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
+    const membership = await db?.execute({
+      sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`,
+      args: [socket.data.userId, peerId]
+    });
+    if (db && !membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
+    const safeRoomId = directRoomId(socket.data.userId, peerId);
     let safeUsername = 'User';
     if (db) {
       const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
       safeUsername = result.rows[0]?.username || safeUsername;
-      await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Networking Demo'] });
+      await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Direct conversation'] });
       await db.execute({ sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] });
     }
 
+    if (socket.data.roomId) socket.leave(socket.data.roomId);
     socket.join(safeRoomId);
     socket.data.roomId = safeRoomId;
     socket.data.username = safeUsername;
@@ -227,6 +269,14 @@ io.on('connection', (socket) => {
       roomId: safeRoomId,
       participantCount: members ? members.size : 1
     });
+    if (db) {
+      const history = await db.execute({
+        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.created_at AS timestamp
+          FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.created_at ASC LIMIT 200`,
+        args: [safeRoomId]
+      });
+      socket.emit('chat-history', history.rows);
+    }
     socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
   });
 
@@ -235,17 +285,18 @@ io.on('connection', (socket) => {
 
     const message = {
       id: `${socket.id}-${Date.now()}`,
-      senderId: socket.id,
+      senderId: socket.data.userId,
       senderName: socket.data.username || 'Guest',
       text: text.trim(),
       timestamp: new Date().toISOString()
     };
-    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text) VALUES (?, ?, ?, ?)', args: [message.id, roomForSocket(roomId), socket.data.userId, message.text] }).catch(() => {});
-    io.to(roomForSocket(roomId)).emit('chat-message', message);
+    if (!socket.data.roomId) return;
+    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text) VALUES (?, ?, ?, ?)', args: [message.id, roomForSocket(), socket.data.userId, message.text] }).catch(() => {});
+    io.to(roomForSocket()).emit('chat-message', message);
   });
 
-  socket.on('call-user', ({ roomId, mode }) => {
-    socket.to(roomForSocket(roomId)).emit('incoming-call', {
+  socket.on('call-user', ({ mode }) => {
+    socket.to(roomForSocket()).emit('incoming-call', {
       callerId: socket.id,
       callerName: socket.data.username || 'Guest',
       mode: mode === 'audio' ? 'audio' : 'video'
@@ -262,8 +313,8 @@ io.on('connection', (socket) => {
     });
   }
 
-  socket.on('end-call', ({ roomId } = {}) => {
-    socket.to(roomForSocket(roomId)).emit('call-ended');
+  socket.on('end-call', () => {
+    if (socket.data.roomId) socket.to(roomForSocket()).emit('call-ended');
   });
 
   socket.on('disconnecting', () => {
