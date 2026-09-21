@@ -22,6 +22,9 @@ const authSubtitle = document.getElementById('authSubtitle');
 const authUsername = document.getElementById('authUsername');
 const authEmail = document.getElementById('authEmail');
 const authPassword = document.getElementById('authPassword');
+const authConfirmPassword = document.getElementById('authConfirmPassword');
+const emailField = document.getElementById('emailField');
+const confirmPasswordField = document.getElementById('confirmPasswordField');
 const authSubmit = document.getElementById('authSubmit');
 const authSwitch = document.getElementById('authSwitch');
 const authError = document.getElementById('authError');
@@ -38,8 +41,11 @@ authForm.addEventListener('submit', async (event) => {
   authError.textContent = '';
   authSubmit.disabled = true;
   try {
-    const payload = { email: authEmail.value, password: authPassword.value };
-    if (isRegisterMode) payload.username = authUsername.value;
+    const payload = { username: authUsername.value, password: authPassword.value };
+    if (isRegisterMode) {
+      payload.email = authEmail.value;
+      payload.confirmPassword = authConfirmPassword.value;
+    }
     const response = await fetch(`/api/auth/${isRegisterMode ? 'register' : 'login'}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
@@ -59,9 +65,10 @@ authSwitch.addEventListener('click', () => {
   authSubtitle.textContent = isRegisterMode ? 'Register to start messaging.' : 'Sign in to continue to your messages.';
   authSubmit.textContent = isRegisterMode ? 'Create account' : 'Sign in';
   authSwitch.textContent = isRegisterMode ? 'Already have an account? Sign in' : 'Create an account';
-  authUsername.hidden = !isRegisterMode;
-  authUsername.parentElement.hidden = !isRegisterMode;
-  authUsername.required = isRegisterMode;
+  emailField.hidden = !isRegisterMode;
+  confirmPasswordField.hidden = !isRegisterMode;
+  authEmail.required = isRegisterMode;
+  authConfirmPassword.required = isRegisterMode;
   authPassword.autocomplete = isRegisterMode ? 'new-password' : 'current-password';
   authError.textContent = '';
 });

@@ -43,7 +43,7 @@ function publicUser(user) {
 }
 
 app.post('/api/auth/register', async (request, response) => {
-  const { username, email, password } = request.body || {};
+  const { username, email, password, confirmPassword } = request.body || {};
   const normalizedUsername = typeof username === 'string' ? username.trim() : '';
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
@@ -56,6 +56,9 @@ app.post('/api/auth/register', async (request, response) => {
   }
   if (typeof password !== 'string' || password.length < 8) {
     return response.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  if (password !== confirmPassword) {
+    return response.status(400).json({ error: 'Passwords do not match' });
   }
 
   try {
@@ -76,12 +79,12 @@ app.post('/api/auth/register', async (request, response) => {
 });
 
 app.post('/api/auth/login', async (request, response) => {
-  const { email, password } = request.body || {};
-  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const { username, password } = request.body || {};
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
   if (!db) return response.status(503).json({ error: 'Database is not configured' });
 
   try {
-    const result = await db.execute({ sql: 'SELECT id, username, email, password_hash FROM users WHERE email = ?', args: [normalizedEmail] });
+    const result = await db.execute({ sql: 'SELECT id, username, email, password_hash FROM users WHERE username = ?', args: [normalizedUsername] });
     const user = result.rows[0];
     const validPassword = user && typeof password === 'string' ? await bcrypt.compare(password, user.password_hash) : false;
     if (!validPassword) return response.status(401).json({ error: 'Email or password is incorrect' });
