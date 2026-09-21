@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Direct | Networking Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="brand-rail" aria-label="Application navigation">
+      <div class="brand-mark">D</div>
+      <div class="rail-rule"></div>
+      <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
+      <button class="rail-button" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i></button>
+      <button class="rail-button" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
+      <div class="rail-bottom"><button class="rail-button" title="Profile" aria-label="Profile"><span class="mini-avatar">Y</span></button></div>
+    </aside>
+
+    <section class="inbox-panel" aria-label="Conversations">
+      <div class="inbox-heading">
+        <div><span class="eyebrow">Data Networking</span><h1>Messages</h1></div>
+        <button class="icon-button subtle" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
+      </div>
+      <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" placeholder="Search" aria-label="Search conversations"></label>
+      <div class="conversation active">
+        <div class="avatar violet">AM<span class="online-dot"></span></div>
+        <div class="conversation-copy"><strong>Alex Morgan</strong><span>Active now</span></div>
+        <time>Now</time>
+      </div>
+      <div class="network-note"><i class="fa-solid fa-circle-nodes"></i><div><strong>Lab mode</strong><span>Socket.io signaling online</span></div><span class="status-pip"></span></div>
+    </section>
+
+    <section class="chat-panel">
+      <header class="chat-header">
+        <div class="contact-info"><div class="avatar violet">AM<span class="online-dot"></span></div><div><h2>Alex Morgan</h2><p><span class="green-dot"></span> Active now</p></div></div>
+        <div class="header-actions"><button class="icon-button" id="audioCallButton" title="Start audio call" aria-label="Start audio call"><i class="fa-solid fa-phone"></i></button><button class="icon-button" id="videoCallButton" title="Start video call" aria-label="Start video call"><i class="fa-solid fa-video"></i></button></div>
+      </header>
+
+      <div class="chat-area" id="chatArea" aria-live="polite">
+        <div class="date-divider"><span>Today</span></div>
+        <div class="welcome-card"><div class="welcome-orb"><i class="fa-solid fa-bolt"></i></div><h3>Start the conversation</h3><p>Messages travel over a persistent TCP connection powered by Socket.io.</p></div>
+      </div>
+
+      <form class="message-form" id="messageForm">
+        <button type="button" class="attach-button" title="Attach a file" aria-label="Attach a file"><i class="fa-solid fa-plus"></i></button>
+        <div class="message-input-wrap"><input id="messageInput" autocomplete="off" maxlength="2000" placeholder="Message..." aria-label="Message"><button type="submit" class="send-button" title="Send message" aria-label="Send message"><i class="fa-solid fa-arrow-up"></i></button></div>
+        <button type="button" class="quick-button" title="Send a heart" aria-label="Send a heart" id="heartButton"><i class="fa-solid fa-heart"></i></button>
+      </form>
+    </section>
+  </main>
+
+  <div class="call-modal" id="callModal" aria-hidden="true">
+    <div class="call-stage" id="callStage">
+      <div class="call-topbar"><div class="call-person"><div class="avatar violet small">AM</div><div><strong id="callTitle">Alex Morgan</strong><span id="callStatus">Calling...</span></div></div><span class="secure-label"><i class="fa-solid fa-lock"></i> Secure peer connection</span></div>
+      <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
+      <div class="voice-placeholder" id="voicePlaceholder"><div class="call-avatar">AM</div><h2>Alex Morgan</h2><p id="voiceStatus">Connecting...</p></div>
+      <video id="localVideo" class="local-video" autoplay muted playsinline></video>
+      <div class="call-controls"><button class="call-control" id="muteButton" title="Mute microphone" aria-label="Mute microphone"><i class="fa-solid fa-microphone"></i></button><button class="call-control camera-control" id="cameraButton" title="Turn off camera" aria-label="Turn off camera"><i class="fa-solid fa-video"></i></button><button class="call-control end-call" id="endCallButton" title="End call" aria-label="End call"><i class="fa-solid fa-phone"></i></button></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>

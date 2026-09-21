@@ -1,0 +1,16 @@
+{
+  "name": "instant-messaging-networking-demo",
+  "version": "1.0.0",
+  "description": "Instant messaging, WebRTC calling, and cloud deployment demo for Data Networking.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
