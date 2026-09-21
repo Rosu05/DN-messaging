@@ -45,6 +45,8 @@
         <button class="icon-button subtle" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
       </div>
       <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" placeholder="Search" aria-label="Search conversations"></label>
+      <div class="inbox-notes" id="inboxNotes"><button class="inbox-note own-note"><span class="note-avatar" id="inboxNoteAvatar">U</span><strong>Your note</strong></button><div id="inboxFriendNotes" class="inbox-friend-notes"></div></div>
+      <div class="message-tabs"><button class="message-tab active" id="messagesTab">Messages</button><button class="message-tab" id="requestsButton">Requests<span class="tab-badge" id="requestsTabBadge" hidden>0</span></button></div>
       <div id="conversationList"><div class="conversation-empty">เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div></div>
       <div class="network-note"><i class="fa-solid fa-circle-nodes"></i><div><strong>Lab mode</strong><span>Socket.io signaling online</span></div><span class="status-pip"></span></div>
     </section>

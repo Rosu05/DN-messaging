@@ -103,6 +103,10 @@ document.getElementById('menuLogoutButton').addEventListener('click', logout);
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
+document.getElementById('requestsButton').addEventListener('click', async () => {
+  await openContacts();
+  document.getElementById('friendRequestsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 function closeSettings() {
   settingsModal.classList.remove('visible');
@@ -119,6 +123,7 @@ async function openContacts() {
     renderPeople('friendsList', result.friends, false);
     renderPeople('suggestionsList', result.suggestions, true);
     renderFriendNotes(result.friends);
+    renderInboxNotes(result.friends);
     renderFriendRequests(result.requests);
     setContactBadge(result.requestCount);
   } catch (_error) {
@@ -137,8 +142,11 @@ async function refreshFriendRequestBadge() {
 
 function setContactBadge(count) {
   const badge = document.getElementById('contactBadge');
+  const tabBadge = document.getElementById('requestsTabBadge');
   badge.textContent = count;
   badge.hidden = !count;
+  tabBadge.textContent = count;
+  tabBadge.hidden = !count;
 }
 
 function closeContacts() {
@@ -163,6 +171,14 @@ function renderPeople(elementId, people, showAddButton) {
 
 function renderFriendNotes(friends) {
   document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+}
+
+function renderInboxNotes(friends) {
+  document.getElementById('inboxFriendNotes').innerHTML = friends.slice(0, 6).map((friend) => `<button class="inbox-note" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+  document.querySelectorAll('.inbox-note[data-note-user]').forEach((button) => button.addEventListener('click', () => {
+    const friend = friends.find((item) => item.id === button.dataset.noteUser);
+    if (friend) selectContact(friend);
+  }));
 }
 
 function renderFriendRequests(requests) {
@@ -248,7 +264,11 @@ function enterApp(user) {
   document.getElementById('settingsAvatar').textContent = initials;
   document.getElementById('settingsUsername').textContent = user.username;
   document.getElementById('noteAvatar').textContent = initials;
+  document.getElementById('inboxNoteAvatar').textContent = initials;
   refreshFriendRequestBadge();
+  fetch('/api/contacts').then((response) => response.ok ? response.json() : null).then((contacts) => {
+    if (contacts) renderInboxNotes(contacts.friends);
+  }).catch(() => {});
   loadConversations().catch(() => {});
   authScreen.classList.remove('visible');
   if (!socket.connected) socket.connect();
