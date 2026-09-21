@@ -1,8 +1,11 @@
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
-const { initializeDatabase } = require('./db');
+const { db, initializeDatabase } = require('./db');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -11,9 +14,102 @@ const io = new Server(httpServer, {
 });
 
 const port = process.env.PORT || 3000;
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be configured in production');
+}
+const authSecret = process.env.SESSION_SECRET || 'local-development-secret-change-me';
 const publicDirectory = path.join(__dirname, 'public');
 
+app.use(express.json());
 app.use(express.static(publicDirectory));
+
+function getTokenFromCookie(request) {
+  const match = request.headers.cookie?.match(/(?:^|; )auth_token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function verifyToken(token) {
+  return token ? jwt.verify(token, authSecret) : null;
+}
+
+function setAuthCookie(response, user) {
+  const token = jwt.sign({ userId: user.id }, authSecret, { expiresIn: '7d' });
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  response.setHeader('Set-Cookie', `auth_token=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secure}`);
+}
+
+function publicUser(user) {
+  return { id: user.id, username: user.username, email: user.email };
+}
+
+app.post('/api/auth/register', async (request, response) => {
+  const { username, email, password } = request.body || {};
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+
+  if (!db) return response.status(503).json({ error: 'Database is not configured' });
+  if (!/^[a-zA-Z0-9_ ]{3,40}$/.test(normalizedUsername)) {
+    return response.status(400).json({ error: 'Username must be 3-40 characters' });
+  }
+  if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+    return response.status(400).json({ error: 'Enter a valid email' });
+  }
+  if (typeof password !== 'string' || password.length < 8) {
+    return response.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    const user = { id: crypto.randomUUID(), username: normalizedUsername, email: normalizedEmail };
+    const passwordHash = await bcrypt.hash(password, 12);
+    await db.execute({
+      sql: 'INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)',
+      args: [user.id, user.username, user.email, passwordHash]
+    });
+    setAuthCookie(response, user);
+    response.status(201).json({ user: publicUser(user) });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT' || error.message?.includes('UNIQUE')) {
+      return response.status(409).json({ error: 'Username or email is already registered' });
+    }
+    response.status(500).json({ error: 'Could not create account' });
+  }
+});
+
+app.post('/api/auth/login', async (request, response) => {
+  const { email, password } = request.body || {};
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!db) return response.status(503).json({ error: 'Database is not configured' });
+
+  try {
+    const result = await db.execute({ sql: 'SELECT id, username, email, password_hash FROM users WHERE email = ?', args: [normalizedEmail] });
+    const user = result.rows[0];
+    const validPassword = user && typeof password === 'string' ? await bcrypt.compare(password, user.password_hash) : false;
+    if (!validPassword) return response.status(401).json({ error: 'Email or password is incorrect' });
+    const safeUser = { id: user.id, username: user.username, email: user.email };
+    setAuthCookie(response, safeUser);
+    response.json({ user: publicUser(safeUser) });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not log in' });
+  }
+});
+
+app.get('/api/auth/me', async (request, response) => {
+  try {
+    const payload = verifyToken(getTokenFromCookie(request));
+    if (!payload || !db) return response.json({ authenticated: false, user: null });
+    const result = await db.execute({ sql: 'SELECT id, username, email FROM users WHERE id = ?', args: [payload.userId] });
+    const user = result.rows[0];
+    response.json({ authenticated: Boolean(user), user: user ? publicUser(user) : null });
+  } catch (_error) {
+    response.json({ authenticated: false, user: null });
+  }
+});
+
+app.post('/api/auth/logout', (_request, response) => {
+  response.setHeader('Set-Cookie', 'auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+  response.status(204).end();
+});
+
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', service: 'instant-messaging-networking-demo', timestamp: new Date().toISOString() });
 });
@@ -23,12 +119,31 @@ app.get('*', (_request, response) => {
 
 // Socket.io uses a persistent TCP connection (normally upgraded to WebSocket)
 // to transport chat messages and signaling packets with low latency.
+io.use((socket, next) => {
+  try {
+    const cookie = socket.handshake.headers.cookie || '';
+    const match = cookie.match(/(?:^|; )auth_token=([^;]+)/);
+    const payload = verifyToken(match ? decodeURIComponent(match[1]) : null);
+    if (!payload) return next(new Error('Authentication required'));
+    socket.data.userId = payload.userId;
+    next();
+  } catch (_error) {
+    next(new Error('Authentication required'));
+  }
+});
+
 io.on('connection', (socket) => {
   const roomForSocket = (requestedRoom) => requestedRoom === socket.data.roomId ? requestedRoom : socket.data.roomId;
 
-  socket.on('join-room', ({ roomId, username }) => {
+  socket.on('join-room', async ({ roomId }) => {
     const safeRoomId = typeof roomId === 'string' && roomId.length <= 80 ? roomId : 'networking-demo';
-    const safeUsername = typeof username === 'string' && username.trim() ? username.trim().slice(0, 40) : 'Guest';
+    let safeUsername = 'User';
+    if (db) {
+      const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
+      safeUsername = result.rows[0]?.username || safeUsername;
+      await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Networking Demo'] });
+      await db.execute({ sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] });
+    }
 
     socket.join(safeRoomId);
     socket.data.roomId = safeRoomId;
@@ -45,14 +160,15 @@ io.on('connection', (socket) => {
   socket.on('chat-message', ({ roomId, text }) => {
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return;
 
-    // The server forwards the message over TCP; it does not store message content.
-    io.to(roomForSocket(roomId)).emit('chat-message', {
+    const message = {
       id: `${socket.id}-${Date.now()}`,
       senderId: socket.id,
       senderName: socket.data.username || 'Guest',
       text: text.trim(),
       timestamp: new Date().toISOString()
-    });
+    };
+    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text) VALUES (?, ?, ?, ?)', args: [message.id, roomForSocket(roomId), socket.data.userId, message.text] }).catch(() => {});
+    io.to(roomForSocket(roomId)).emit('chat-message', message);
   });
 
   socket.on('call-user', ({ roomId, mode }) => {

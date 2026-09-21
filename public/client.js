@@ -1,6 +1,7 @@
-const socket = io();
+const socket = io({ autoConnect: false });
 const roomId = 'networking-demo';
-const username = `Student-${Math.floor(Math.random() * 900 + 100)}`;
+let currentUser = null;
+let isRegisterMode = false;
 const rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 const chatArea = document.getElementById('chatArea');
@@ -14,6 +15,16 @@ const remoteVideo = document.getElementById('remoteVideo');
 const localVideo = document.getElementById('localVideo');
 const voicePlaceholder = document.getElementById('voicePlaceholder');
 const toast = document.getElementById('toast');
+const authScreen = document.getElementById('authScreen');
+const authForm = document.getElementById('authForm');
+const authTitle = document.getElementById('authTitle');
+const authSubtitle = document.getElementById('authSubtitle');
+const authUsername = document.getElementById('authUsername');
+const authEmail = document.getElementById('authEmail');
+const authPassword = document.getElementById('authPassword');
+const authSubmit = document.getElementById('authSubmit');
+const authSwitch = document.getElementById('authSwitch');
+const authError = document.getElementById('authError');
 
 let peerConnection = null;
 let localStream = null;
@@ -22,7 +33,63 @@ let activeCallMode = 'video';
 let isCaller = false;
 let toastTimer = null;
 
-socket.on('connect', () => socket.emit('join-room', { roomId, username }));
+authForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  authError.textContent = '';
+  authSubmit.disabled = true;
+  try {
+    const payload = { email: authEmail.value, password: authPassword.value };
+    if (isRegisterMode) payload.username = authUsername.value;
+    const response = await fetch(`/api/auth/${isRegisterMode ? 'register' : 'login'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Authentication failed');
+    enterApp(result.user);
+  } catch (error) {
+    authError.textContent = error.message;
+  } finally {
+    authSubmit.disabled = false;
+  }
+});
+
+authSwitch.addEventListener('click', () => {
+  isRegisterMode = !isRegisterMode;
+  authTitle.textContent = isRegisterMode ? 'Create your account' : 'Welcome back';
+  authSubtitle.textContent = isRegisterMode ? 'Register to start messaging.' : 'Sign in to continue to your messages.';
+  authSubmit.textContent = isRegisterMode ? 'Create account' : 'Sign in';
+  authSwitch.textContent = isRegisterMode ? 'Already have an account? Sign in' : 'Create an account';
+  authUsername.hidden = !isRegisterMode;
+  authUsername.parentElement.hidden = !isRegisterMode;
+  authUsername.required = isRegisterMode;
+  authPassword.autocomplete = isRegisterMode ? 'new-password' : 'current-password';
+  authError.textContent = '';
+});
+
+document.getElementById('logoutButton').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  socket.disconnect();
+  currentUser = null;
+  authScreen.classList.add('visible');
+});
+
+async function bootstrapAuth() {
+  const response = await fetch('/api/auth/me');
+  const result = await response.json();
+  if (result.authenticated) enterApp(result.user);
+}
+
+function enterApp(user) {
+  currentUser = user;
+  const initials = user.username.slice(0, 1).toUpperCase();
+  document.getElementById('currentUser').textContent = `Signed in as ${user.username}`;
+  document.getElementById('railAvatar').textContent = initials;
+  authScreen.classList.remove('visible');
+  if (!socket.connected) socket.connect();
+}
+
+socket.on('connect', () => socket.emit('join-room', { roomId }));
+socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
   if (participantCount > 1) showToast('Connected to the networking room');
 });
@@ -185,3 +252,5 @@ function toggleCamera() {
   document.getElementById('cameraButton').innerHTML = `<i class="fa-solid fa-video${track.enabled ? '' : '-slash'}"></i>`;
 }
 function showToast(message) { toast.textContent = message; toast.classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('visible'), 2800); }
+
+bootstrapAuth().catch(() => showToast('Could not check your session'));

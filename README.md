@@ -10,6 +10,7 @@
 - ปุ่ม Mute microphone, Turn off camera และ End call พร้อมหน้าต่าง call แบบ responsive
 - Express static server, health check และ Docker image สำหรับ cloud deployment
 - Turso database schema สำหรับ users, rooms, room members และ message history
+- Register/login ด้วย bcrypt password hash และ httpOnly authentication cookie
 
 ## โครงสร้างและเทคโนโลยี
 
@@ -48,6 +49,7 @@ Invoke-WebRequest http://localhost:3000/health
 ```text
 TURSO_DATABASE_URL=libsql://...
 TURSO_AUTH_TOKEN=...
+SESSION_SECRET=สุ่มค่าลับอย่างน้อย 32 ตัวอักษร
 ```
 
 เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members` และ `messages` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
