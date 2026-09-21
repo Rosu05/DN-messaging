@@ -39,12 +39,19 @@ async function initializeDatabase() {
     `CREATE TABLE IF NOT EXISTS friendships (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       friend_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('pending', 'accepted')),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (user_id, friend_id),
       CHECK (user_id <> friend_id)
     )`,
     'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)'
   ], 'write');
+
+  try {
+    await db.execute("ALTER TABLE friendships ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'");
+  } catch (error) {
+    if (!error.message?.includes('duplicate column name')) throw error;
+  }
 
   console.log('Turso database schema is ready.');
 }

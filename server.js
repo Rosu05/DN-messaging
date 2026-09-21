@@ -128,15 +128,21 @@ app.get('/api/contacts', async (request, response) => {
     const friends = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
-        WHERE f.user_id = ? ORDER BY u.username`, args: [userId]
+        WHERE f.user_id = ? AND f.status = 'accepted' ORDER BY u.username`, args: [userId]
     });
     const suggestions = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
-        WHERE u.id <> ? AND NOT EXISTS
-        (SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = u.id)
-        ORDER BY u.username`, args: [userId, userId]
+        WHERE u.id <> ? AND NOT EXISTS (
+          SELECT 1 FROM friendships f WHERE (f.user_id = ? AND f.friend_id = u.id)
+          OR (f.user_id = u.id AND f.friend_id = ?)
+        ) ORDER BY u.username`, args: [userId, userId, userId]
     });
-    response.json({ friends: friends.rows.map(publicUser), suggestions: suggestions.rows.map(publicUser) });
+    const requests = await db.execute({
+      sql: `SELECT u.id, u.username, u.email FROM users u
+        INNER JOIN friendships f ON f.user_id = u.id
+        WHERE f.friend_id = ? AND f.status = 'pending' ORDER BY f.created_at DESC`, args: [userId]
+    });
+    response.json({ friends: friends.rows.map(publicUser), suggestions: suggestions.rows.map(publicUser), requests: requests.rows.map(publicUser), requestCount: requests.rows.length });
   } catch (_error) {
     response.status(500).json({ error: 'Could not load contacts' });
   }
@@ -148,14 +154,33 @@ app.post('/api/contacts/:friendId', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   if (userId === friendId) return response.status(400).json({ error: 'You cannot add yourself' });
   try {
-    await db.batch([
-      { sql: 'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)', args: [userId, friendId] },
-      { sql: 'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)', args: [friendId, userId] }
-    ], 'write');
-    response.status(201).json({ added: true });
+    await db.execute({ sql: 'INSERT OR IGNORE INTO friendships (user_id, friend_id, status) VALUES (?, ?, ?)', args: [userId, friendId, 'pending'] });
+    response.status(201).json({ requested: true });
   } catch (_error) {
     response.status(500).json({ error: 'Could not add friend' });
   }
+});
+
+app.post('/api/contacts/:friendId/accept', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const friendId = request.params.friendId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    await db.batch([
+      { sql: "UPDATE friendships SET status = 'accepted' WHERE user_id = ? AND friend_id = ? AND status = 'pending'", args: [friendId, userId] },
+      { sql: "INSERT OR REPLACE INTO friendships (user_id, friend_id, status) VALUES (?, ?, 'accepted')", args: [userId, friendId] }
+    ], 'write');
+    response.json({ accepted: true });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not accept friend request' });
+  }
+});
+
+app.delete('/api/contacts/:friendId/request', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  await db.execute({ sql: 'DELETE FROM friendships WHERE user_id = ? AND friend_id = ? AND status = ?', args: [request.params.friendId, userId, 'pending'] });
+  response.status(204).end();
 });
 
 app.get('/health', (_request, response) => {

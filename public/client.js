@@ -119,9 +119,26 @@ async function openContacts() {
     renderPeople('friendsList', result.friends, false);
     renderPeople('suggestionsList', result.suggestions, true);
     renderFriendNotes(result.friends);
+    renderFriendRequests(result.requests);
+    setContactBadge(result.requestCount);
   } catch (_error) {
     document.getElementById('friendsList').innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
   }
+}
+
+async function refreshFriendRequestBadge() {
+  try {
+    const response = await fetch('/api/contacts');
+    if (response.ok) setContactBadge((await response.json()).requestCount);
+  } catch (_error) {
+    // The contacts screen will show the full error state when opened.
+  }
+}
+
+function setContactBadge(count) {
+  const badge = document.getElementById('contactBadge');
+  badge.textContent = count;
+  badge.hidden = !count;
 }
 
 function closeContacts() {
@@ -146,6 +163,20 @@ function renderPeople(elementId, people, showAddButton) {
 
 function renderFriendNotes(friends) {
   document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+}
+
+function renderFriendRequests(requests) {
+  const section = document.getElementById('friendRequestsSection');
+  document.getElementById('requestCount').textContent = requests.length ? `(${requests.length})` : '';
+  section.hidden = !requests.length;
+  document.getElementById('requestsList').innerHTML = requests.map((person) => `<div class="request-row"><span class="person-avatar">${person.username.slice(0, 2).toUpperCase()}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>ต้องการเป็นเพื่อนกับคุณ</small></span><button class="request-action accept" data-request-id="${person.id}">รับ</button><button class="request-action decline" data-request-id="${person.id}">ปฏิเสธ</button></div>`).join('');
+  document.querySelectorAll('.request-action.accept').forEach((button) => button.addEventListener('click', () => respondToFriendRequest(button.dataset.requestId, true)));
+  document.querySelectorAll('.request-action.decline').forEach((button) => button.addEventListener('click', () => respondToFriendRequest(button.dataset.requestId, false)));
+}
+
+async function respondToFriendRequest(friendId, accepted) {
+  const response = await fetch(`/api/contacts/${friendId}/${accepted ? 'accept' : 'request'}`, { method: accepted ? 'POST' : 'DELETE' });
+  if (response.ok) { showToast(accepted ? 'รับคำขอเป็นเพื่อนแล้ว' : 'ปฏิเสธคำขอแล้ว'); openContacts(); }
 }
 
 async function addFriend(friendId) {
@@ -190,6 +221,7 @@ function enterApp(user) {
   document.getElementById('settingsAvatar').textContent = initials;
   document.getElementById('settingsUsername').textContent = user.username;
   document.getElementById('noteAvatar').textContent = initials;
+  refreshFriendRequestBadge();
   authScreen.classList.remove('visible');
   if (!socket.connected) socket.connect();
 }
@@ -360,3 +392,4 @@ function toggleCamera() {
 function showToast(message) { toast.textContent = message; toast.classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('visible'), 2800); }
 
 bootstrapAuth().catch(() => showToast('Could not check your session'));
+setInterval(refreshFriendRequestBadge, 15000);

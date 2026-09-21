@@ -34,7 +34,7 @@
       <div class="brand-mark">D</div>
       <div class="rail-rule"></div>
       <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
-      <button class="rail-button" id="contactsButton" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i></button>
+      <button class="rail-button contacts-rail-button" id="contactsButton" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i><span class="notification-badge" id="contactBadge" hidden>0</span></button>
       <button class="rail-button" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
       <div class="rail-bottom"><button class="rail-button" id="profileButton" title="Profile" aria-label="Profile"><span class="mini-avatar" id="railAvatar">U</span></button></div>
     </aside>
@@ -72,7 +72,7 @@
     <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">
       <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
       <div class="notes-strip"><button class="note-card own-note"><span class="note-avatar" id="noteAvatar">U</span><strong>Your note</strong></button><div id="friendNotes" class="friend-notes"></div></div>
-      <div class="contacts-content"><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div></div>
+      <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div></div>
     </section>
   </div>
 
