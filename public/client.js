@@ -61,7 +61,7 @@ authForm.addEventListener('submit', async (event) => {
 
 authSwitch.addEventListener('click', () => {
   isRegisterMode = !isRegisterMode;
-  authTitle.textContent = isRegisterMode ? 'Create your account' : 'Welcome back';
+  authTitle.textContent = isRegisterMode ? 'Create your account' : 'Welcome';
   authSubtitle.textContent = isRegisterMode ? 'Register to start messaging.' : 'Sign in to continue to your messages.';
   authSubmit.textContent = isRegisterMode ? 'Create account' : 'Sign in';
   authSwitch.textContent = isRegisterMode ? 'Already have an account? Sign in' : 'Create an account';
