@@ -2,6 +2,7 @@ const socket = io({ autoConnect: false });
 let currentUser = null;
 let selectedContact = null;
 let activeRoomId = null;
+let chatSelectionToken = 0;
 let isRegisterMode = false;
 const rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -44,7 +45,10 @@ document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEve
     document.getElementById('appShell').classList.remove('mobile-chat-open');
     document.getElementById('messagesTab').click();
   }
-  if (destination === 'search') document.querySelector('.search-box input').focus();
+  if (destination === 'search') {
+    document.getElementById('appShell').classList.remove('mobile-chat-open');
+    setTimeout(() => document.querySelector('.search-box input').focus(), 0);
+  }
 }));
 
 let peerConnection = null;
@@ -119,7 +123,20 @@ contactsModal.addEventListener('click', (event) => { if (event.target === contac
 document.getElementById('mobileBackButton').addEventListener('click', () => {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
 });
+document.getElementById('messagesTab').addEventListener('click', () => setMessageTab('messages'));
+document.getElementById('desktopComposeButton').addEventListener('click', openContacts);
+document.querySelector('.mobile-compose').addEventListener('click', openContacts);
+document.getElementById('railSettingsButton').addEventListener('click', () => document.getElementById('settingsButton').click());
+document.getElementById('attachButton').addEventListener('click', () => {
+  if (!selectedContact) return showToast('เลือกเพื่อนก่อนแนบไฟล์');
+  document.getElementById('attachmentInput').click();
+});
+document.getElementById('attachmentInput').addEventListener('change', (event) => {
+  const file = event.target.files[0];
+  if (file) showToast(`เลือกไฟล์ ${file.name} แล้ว แต่การส่งไฟล์ยังไม่เปิดใช้งาน`);
+});
 document.getElementById('requestsButton').addEventListener('click', async () => {
+  setMessageTab('requests');
   await openContacts();
   document.getElementById('friendRequestsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
@@ -174,6 +191,11 @@ function setContactBadge(count) {
   mobileBadge.hidden = !count;
 }
 
+function setMessageTab(tab) {
+  document.getElementById('messagesTab').classList.toggle('active', tab === 'messages');
+  document.getElementById('requestsButton').classList.toggle('active', tab === 'requests');
+}
+
 function closeContacts() {
   contactsModal.classList.remove('visible');
   contactsModal.setAttribute('aria-hidden', 'true');
@@ -218,14 +240,17 @@ function renderFriendRequests(requests) {
 async function respondToFriendRequest(friendId, accepted) {
   const response = await fetch(`/api/contacts/${friendId}/${accepted ? 'accept' : 'request'}`, { method: accepted ? 'POST' : 'DELETE' });
   if (response.ok) { showToast(accepted ? 'รับคำขอเป็นเพื่อนแล้ว' : 'ปฏิเสธคำขอแล้ว'); openContacts(); }
+  else showToast((await response.json()).error || 'ดำเนินการไม่สำเร็จ');
 }
 
 async function addFriend(friendId) {
   const response = await fetch(`/api/contacts/${friendId}`, { method: 'POST' });
-  if (response.ok) { showToast('เพิ่มเพื่อนแล้ว'); openContacts(); }
+  if (response.ok) { showToast('ส่งคำขอเป็นเพื่อนแล้ว'); openContacts(); }
+  else showToast((await response.json()).error || 'ส่งคำขอไม่สำเร็จ');
 }
 
 function selectContact(contact) {
+  chatSelectionToken += 1;
   selectedContact = contact;
   document.getElementById('chatAvatar').textContent = contact.username.slice(0, 2).toUpperCase();
   document.getElementById('chatContactName').textContent = contact.username;
@@ -234,7 +259,7 @@ function selectContact(contact) {
   closeContacts();
   document.getElementById('appShell').classList.add('mobile-chat-open');
   activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
-  if (socket.connected) socket.emit('join-room', { peerId: contact.id });
+  if (socket.connected) socket.emit('join-room', { peerId: contact.id, selectionToken: chatSelectionToken });
 }
 
 function clearChatArea() {
@@ -304,14 +329,17 @@ function enterApp(user) {
 }
 
 socket.on('connect', () => {
-  if (selectedContact) socket.emit('join-room', { peerId: selectedContact.id });
+  if (selectedContact) socket.emit('join-room', { peerId: selectedContact.id, selectionToken: chatSelectionToken });
 });
 socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
   document.getElementById('chatContactStatus').textContent = participantCount > 1 ? 'ออนไลน์อยู่' : 'ออฟไลน์';
 });
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
-socket.on('chat-history', (messages) => messages.forEach((message) => renderMessage(message)));
+socket.on('chat-history', ({ messages, selectionToken }) => {
+  if (selectionToken !== chatSelectionToken) return;
+  messages.forEach((message) => renderMessage(message));
+});
 socket.on('chat-error', ({ message }) => showToast(message));
 socket.on('peer-left', () => { if (callModal.classList.contains('visible')) endCall(false); });
 
@@ -328,7 +356,10 @@ document.getElementById('heartButton').addEventListener('click', () => {
   if (socket.connected && selectedContact) socket.emit('chat-message', { text: '❤️' });
 });
 
-socket.on('chat-message', (message) => renderMessage(message));
+socket.on('chat-message', (message) => {
+  renderMessage(message);
+  loadConversations().catch(() => {});
+});
 
 document.getElementById('audioCallButton').addEventListener('click', () => startCall('audio'));
 document.getElementById('videoCallButton').addEventListener('click', () => startCall('video'));
@@ -338,6 +369,7 @@ document.getElementById('cameraButton').addEventListener('click', toggleCamera);
 
 async function startCall(mode) {
   if (peerConnection) return;
+  if (!selectedContact || !activeRoomId) return showToast('เลือกเพื่อนก่อนเริ่มโทร');
   activeCallMode = mode;
   isCaller = true;
   openCallModal('Calling...', 'Starting camera and microphone...');
@@ -441,7 +473,6 @@ function renderMessage(message) {
   row.append(bubble, meta);
   chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
-  loadConversations().catch(() => {});
 }
 
 function formatTime(timestamp) {

@@ -35,7 +35,7 @@
       <div class="rail-rule"></div>
       <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
       <button class="rail-button contacts-rail-button" id="contactsButton" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i><span class="notification-badge" id="contactBadge" hidden>0</span></button>
-      <button class="rail-button" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
+        <button class="rail-button" id="railSettingsButton" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
       <div class="rail-bottom"><button class="rail-button" id="profileButton" title="Profile" aria-label="Profile"><span class="mini-avatar" id="railAvatar">U</span></button></div>
     </aside>
 
@@ -43,7 +43,7 @@
       <div class="mobile-topbar"><strong id="mobileUsername">Messages</strong><button class="mobile-compose" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button></div>
       <div class="inbox-heading">
         <div><span class="eyebrow">Data Networking</span><h1>Messages</h1><span class="current-user" id="currentUser"></span></div>
-        <button class="icon-button subtle" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
+        <button class="icon-button subtle" id="desktopComposeButton" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
       </div>
       <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" placeholder="Search" aria-label="Search conversations"></label>
       <div class="inbox-notes" id="inboxNotes"><button class="inbox-note own-note"><span class="note-avatar" id="inboxNoteAvatar">U</span><strong>Your note</strong></button><div id="inboxFriendNotes" class="inbox-friend-notes"></div></div>
@@ -64,7 +64,7 @@
       </div>
 
       <form class="message-form" id="messageForm">
-        <button type="button" class="attach-button" title="Attach a file" aria-label="Attach a file"><i class="fa-solid fa-plus"></i></button>
+          <button type="button" class="attach-button" id="attachButton" title="Attach a file" aria-label="Attach a file"><i class="fa-solid fa-plus"></i></button><input type="file" id="attachmentInput" hidden>
         <div class="message-input-wrap"><input id="messageInput" autocomplete="off" maxlength="2000" placeholder="Message..." aria-label="Message"><button type="submit" class="send-button" title="Send message" aria-label="Send message"><i class="fa-solid fa-arrow-up"></i></button></div>
         <button type="button" class="quick-button" title="Send a heart" aria-label="Send a heart" id="heartButton"><i class="fa-solid fa-heart"></i></button>
       </form>

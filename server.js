@@ -243,7 +243,7 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const roomForSocket = () => socket.data.roomId;
 
-  socket.on('join-room', async ({ peerId }) => {
+  socket.on('join-room', async ({ peerId, selectionToken }) => {
     if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
     const membership = await db?.execute({
       sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`,
@@ -267,7 +267,8 @@ io.on('connection', (socket) => {
     const members = io.sockets.adapter.rooms.get(safeRoomId);
     socket.emit('room-joined', {
       roomId: safeRoomId,
-      participantCount: members ? members.size : 1
+      participantCount: members ? members.size : 1,
+      selectionToken
     });
     if (db) {
       const history = await db.execute({
@@ -275,7 +276,7 @@ io.on('connection', (socket) => {
           FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.created_at ASC LIMIT 200`,
         args: [safeRoomId]
       });
-      socket.emit('chat-history', history.rows);
+      socket.emit('chat-history', { messages: history.rows, selectionToken });
     }
     socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
   });
