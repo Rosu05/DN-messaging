@@ -34,7 +34,7 @@
       <div class="brand-mark">D</div>
       <div class="rail-rule"></div>
       <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
-      <button class="rail-button" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i></button>
+      <button class="rail-button" id="contactsButton" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i></button>
       <button class="rail-button" title="Settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
       <div class="rail-bottom"><button class="rail-button" id="profileButton" title="Profile" aria-label="Profile"><span class="mini-avatar" id="railAvatar">U</span></button></div>
     </aside>
@@ -45,17 +45,13 @@
         <button class="icon-button subtle" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
       </div>
       <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" placeholder="Search" aria-label="Search conversations"></label>
-      <div class="conversation active">
-        <div class="avatar violet">AM<span class="online-dot"></span></div>
-        <div class="conversation-copy"><strong>Alex Morgan</strong><span>Active now</span></div>
-        <time>Now</time>
-      </div>
+      <div class="conversation-empty">เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div>
       <div class="network-note"><i class="fa-solid fa-circle-nodes"></i><div><strong>Lab mode</strong><span>Socket.io signaling online</span></div><span class="status-pip"></span></div>
     </section>
 
     <section class="chat-panel">
       <header class="chat-header">
-        <div class="contact-info"><div class="avatar violet">AM<span class="online-dot"></span></div><div><h2>Alex Morgan</h2><p><span class="green-dot"></span> Active now</p></div></div>
+        <div class="contact-info"><div class="avatar violet" id="chatAvatar">?</div><div><h2 id="chatContactName">เลือกเพื่อน</h2><p><span class="green-dot"></span> <span id="chatContactStatus">พร้อมเริ่มการสนทนา</span></p></div></div>
         <div class="header-actions"><button class="icon-button" id="audioCallButton" title="Start audio call" aria-label="Start audio call"><i class="fa-solid fa-phone"></i></button><button class="icon-button" id="videoCallButton" title="Start video call" aria-label="Start video call"><i class="fa-solid fa-video"></i></button></div>
       </header>
 
@@ -71,6 +67,14 @@
       </form>
     </section>
   </main>
+
+  <div class="contacts-modal" id="contactsModal" aria-hidden="true">
+    <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">
+      <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <div class="notes-strip"><button class="note-card own-note"><span class="note-avatar" id="noteAvatar">U</span><strong>Your note</strong></button><div id="friendNotes" class="friend-notes"></div></div>
+      <div class="contacts-content"><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div></div>
+    </section>
+  </div>
 
   <div class="profile-menu" id="profileMenu" aria-hidden="true">
     <button type="button" class="profile-menu-item" id="settingsButton"><i class="fa-solid fa-gear"></i><span>การกำหนดลักษณะ</span></button>
@@ -97,9 +101,9 @@
 
   <div class="call-modal" id="callModal" aria-hidden="true">
     <div class="call-stage" id="callStage">
-      <div class="call-topbar"><div class="call-person"><div class="avatar violet small">AM</div><div><strong id="callTitle">Alex Morgan</strong><span id="callStatus">Calling...</span></div></div><span class="secure-label"><i class="fa-solid fa-lock"></i> Secure peer connection</span></div>
+      <div class="call-topbar"><div class="call-person"><div class="avatar violet small">?</div><div><strong id="callTitle">เพื่อน</strong><span id="callStatus">Calling...</span></div></div><span class="secure-label"><i class="fa-solid fa-lock"></i> Secure peer connection</span></div>
       <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
-      <div class="voice-placeholder" id="voicePlaceholder"><div class="call-avatar">AM</div><h2>Alex Morgan</h2><p id="voiceStatus">Connecting...</p></div>
+      <div class="voice-placeholder" id="voicePlaceholder"><div class="call-avatar">?</div><h2>เพื่อน</h2><p id="voiceStatus">Connecting...</p></div>
       <video id="localVideo" class="local-video" autoplay muted playsinline></video>
       <div class="call-controls"><button class="call-control" id="muteButton" title="Mute microphone" aria-label="Mute microphone"><i class="fa-solid fa-microphone"></i></button><button class="call-control camera-control" id="cameraButton" title="Turn off camera" aria-label="Turn off camera"><i class="fa-solid fa-video"></i></button><button class="call-control end-call" id="endCallButton" title="End call" aria-label="End call"><i class="fa-solid fa-phone"></i></button></div>
     </div>

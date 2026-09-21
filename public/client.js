@@ -1,6 +1,7 @@
 const socket = io({ autoConnect: false });
 const roomId = 'networking-demo';
 let currentUser = null;
+let selectedContact = null;
 let isRegisterMode = false;
 const rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -31,6 +32,7 @@ const authError = document.getElementById('authError');
 const profileButton = document.getElementById('profileButton');
 const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
+const contactsModal = document.getElementById('contactsModal');
 
 let peerConnection = null;
 let localStream = null;
@@ -98,10 +100,69 @@ document.querySelectorAll('input[name="theme"]').forEach((input) => input.addEve
 }));
 
 document.getElementById('menuLogoutButton').addEventListener('click', logout);
+document.getElementById('contactsButton').addEventListener('click', openContacts);
+document.getElementById('contactsClose').addEventListener('click', closeContacts);
+contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
 
 function closeSettings() {
   settingsModal.classList.remove('visible');
   settingsModal.setAttribute('aria-hidden', 'true');
+}
+
+async function openContacts() {
+  contactsModal.classList.add('visible');
+  contactsModal.setAttribute('aria-hidden', 'false');
+  try {
+    const response = await fetch('/api/contacts');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    renderPeople('friendsList', result.friends, false);
+    renderPeople('suggestionsList', result.suggestions, true);
+    renderFriendNotes(result.friends);
+  } catch (_error) {
+    document.getElementById('friendsList').innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
+  }
+}
+
+function closeContacts() {
+  contactsModal.classList.remove('visible');
+  contactsModal.setAttribute('aria-hidden', 'true');
+}
+
+function renderPeople(elementId, people, showAddButton) {
+  const container = document.getElementById(elementId);
+  if (!people.length) {
+    container.innerHTML = `<p class="empty-contacts">${showAddButton ? 'ยังไม่มีรายชื่อแนะนำ' : 'ยังไม่มีเพื่อน'}</p>`;
+    return;
+  }
+  container.innerHTML = people.map((person) => {
+    const initials = person.username.slice(0, 2).toUpperCase();
+    return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${showAddButton ? 'แนะนำสำหรับคุณ' : 'เพื่อนของคุณ'}</small></span>${showAddButton ? '<span class="add-person">เพิ่ม</span>' : '<i class="fa-solid fa-chevron-right"></i>'}</button>`;
+  }).join('');
+  container.querySelectorAll('.person-row').forEach((row) => {
+    row.addEventListener('click', () => showAddButton ? addFriend(row.dataset.userId) : selectContact(people.find((person) => person.id === row.dataset.userId)));
+  });
+}
+
+function renderFriendNotes(friends) {
+  document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+}
+
+async function addFriend(friendId) {
+  const response = await fetch(`/api/contacts/${friendId}`, { method: 'POST' });
+  if (response.ok) { showToast('เพิ่มเพื่อนแล้ว'); openContacts(); }
+}
+
+function selectContact(contact) {
+  selectedContact = contact;
+  document.getElementById('chatAvatar').textContent = contact.username.slice(0, 2).toUpperCase();
+  document.getElementById('chatContactName').textContent = contact.username;
+  document.getElementById('chatContactStatus').textContent = 'พร้อมเริ่มการสนทนา';
+  closeContacts();
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
 }
 
 async function logout() {
@@ -128,6 +189,7 @@ function enterApp(user) {
   document.getElementById('railAvatar').textContent = initials;
   document.getElementById('settingsAvatar').textContent = initials;
   document.getElementById('settingsUsername').textContent = user.username;
+  document.getElementById('noteAvatar').textContent = initials;
   authScreen.classList.remove('visible');
   if (!socket.connected) socket.connect();
 }
@@ -268,7 +330,7 @@ function renderMessage(message) {
 }
 
 function formatTime(timestamp) { return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp)); }
-function openCallModal(title, status) { callTitle.textContent = 'Alex Morgan'; callStatus.textContent = title; voiceStatus.textContent = status; callModal.classList.add('visible'); callModal.setAttribute('aria-hidden', 'false'); }
+function openCallModal(title, status) { const contactName = selectedContact?.username || 'เพื่อน'; callTitle.textContent = contactName; callStatus.textContent = title; voiceStatus.textContent = status; callModal.classList.add('visible'); callModal.setAttribute('aria-hidden', 'false'); }
 function updateCallStatus(status) { callStatus.textContent = status; voiceStatus.textContent = status; }
 function showLocalMedia() { localVideo.srcObject = localStream; localVideo.classList.toggle('hidden', activeCallMode !== 'video'); remoteVideo.classList.toggle('hidden', activeCallMode !== 'video'); voicePlaceholder.classList.toggle('hidden', activeCallMode === 'video'); }
 

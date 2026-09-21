@@ -42,6 +42,14 @@ function publicUser(user) {
   return { id: user.id, username: user.username, email: user.email };
 }
 
+function authenticatedUserId(request) {
+  try {
+    return verifyToken(getTokenFromCookie(request))?.userId || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 app.post('/api/auth/register', async (request, response) => {
   const { username, email, password, confirmPassword } = request.body || {};
   const normalizedUsername = typeof username === 'string' ? username.trim() : '';
@@ -111,6 +119,43 @@ app.get('/api/auth/me', async (request, response) => {
 app.post('/api/auth/logout', (_request, response) => {
   response.setHeader('Set-Cookie', 'auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
   response.status(204).end();
+});
+
+app.get('/api/contacts', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    const friends = await db.execute({
+      sql: `SELECT u.id, u.username, u.email FROM users u
+        INNER JOIN friendships f ON f.friend_id = u.id
+        WHERE f.user_id = ? ORDER BY u.username`, args: [userId]
+    });
+    const suggestions = await db.execute({
+      sql: `SELECT u.id, u.username, u.email FROM users u
+        WHERE u.id <> ? AND NOT EXISTS
+        (SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = u.id)
+        ORDER BY u.username`, args: [userId, userId]
+    });
+    response.json({ friends: friends.rows.map(publicUser), suggestions: suggestions.rows.map(publicUser) });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not load contacts' });
+  }
+});
+
+app.post('/api/contacts/:friendId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const friendId = request.params.friendId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (userId === friendId) return response.status(400).json({ error: 'You cannot add yourself' });
+  try {
+    await db.batch([
+      { sql: 'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)', args: [userId, friendId] },
+      { sql: 'INSERT OR IGNORE INTO friendships (user_id, friend_id) VALUES (?, ?)', args: [friendId, userId] }
+    ], 'write');
+    response.status(201).json({ added: true });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not add friend' });
+  }
 });
 
 app.get('/health', (_request, response) => {

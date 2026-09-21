@@ -36,6 +36,13 @@ async function initializeDatabase() {
       text TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
+    `CREATE TABLE IF NOT EXISTS friendships (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      friend_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, friend_id),
+      CHECK (user_id <> friend_id)
+    )`,
     'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)'
   ], 'write');
 
