@@ -40,6 +40,7 @@
     </aside>
 
     <section class="inbox-panel" aria-label="Conversations">
+      <div class="mobile-topbar"><strong id="mobileUsername">Messages</strong><button class="mobile-compose" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button></div>
       <div class="inbox-heading">
         <div><span class="eyebrow">Data Networking</span><h1>Messages</h1><span class="current-user" id="currentUser"></span></div>
         <button class="icon-button subtle" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
@@ -69,6 +70,13 @@
       </form>
     </section>
   </main>
+
+  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+    <button class="mobile-nav-button active" data-mobile-nav="messages" aria-label="Messages"><i class="fa-solid fa-house"></i></button>
+    <button class="mobile-nav-button" data-mobile-nav="contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i><span class="mobile-nav-badge" id="mobileNavBadge" hidden>0</span></button>
+    <button class="mobile-nav-button" data-mobile-nav="search" aria-label="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+    <button class="mobile-nav-button" data-mobile-nav="profile" aria-label="Profile"><span class="mobile-nav-avatar" id="mobileNavAvatar">U</span></button>
+  </nav>
 
   <div class="contacts-modal" id="contactsModal" aria-hidden="true">
     <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">

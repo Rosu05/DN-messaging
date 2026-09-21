@@ -34,6 +34,19 @@ const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
 const contactsModal = document.getElementById('contactsModal');
 
+document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEventListener('click', () => {
+  document.querySelectorAll('.mobile-nav-button').forEach((item) => item.classList.remove('active'));
+  button.classList.add('active');
+  const destination = button.dataset.mobileNav;
+  if (destination === 'contacts') openContacts();
+  if (destination === 'profile') profileButton.click();
+  if (destination === 'messages') {
+    document.getElementById('appShell').classList.remove('mobile-chat-open');
+    document.getElementById('messagesTab').click();
+  }
+  if (destination === 'search') document.querySelector('.search-box input').focus();
+}));
+
 let peerConnection = null;
 let localStream = null;
 let activePeerId = null;
@@ -110,6 +123,12 @@ document.getElementById('requestsButton').addEventListener('click', async () => 
   await openContacts();
   document.getElementById('friendRequestsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
+document.querySelector('.search-box input').addEventListener('input', (event) => {
+  const query = event.target.value.trim().toLowerCase();
+  document.querySelectorAll('#conversationList .conversation').forEach((conversation) => {
+    conversation.hidden = query && !conversation.textContent.toLowerCase().includes(query);
+  });
+});
 
 function closeSettings() {
   settingsModal.classList.remove('visible');
@@ -150,6 +169,9 @@ function setContactBadge(count) {
   badge.hidden = !count;
   tabBadge.textContent = count;
   tabBadge.hidden = !count;
+  const mobileBadge = document.getElementById('mobileNavBadge');
+  mobileBadge.textContent = count;
+  mobileBadge.hidden = !count;
 }
 
 function closeContacts() {
@@ -267,6 +289,8 @@ function enterApp(user) {
   document.getElementById('railAvatar').textContent = initials;
   document.getElementById('settingsAvatar').textContent = initials;
   document.getElementById('settingsUsername').textContent = user.username;
+  document.getElementById('mobileUsername').textContent = user.username;
+  document.getElementById('mobileNavAvatar').textContent = initials;
   document.getElementById('noteAvatar').textContent = initials;
   document.getElementById('inboxNoteAvatar').textContent = initials;
   refreshFriendRequestBadge();
