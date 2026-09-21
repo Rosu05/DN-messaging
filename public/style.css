@@ -131,3 +131,14 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
   body:not(.dark-theme) .mobile-nav-button.active { color: var(--ink); }
   body:not(.dark-theme) .profile-menu { color: #f4f1f6; background: #292929; }
 }
+@media (max-width: 680px) {
+  .conversation { width: 100%; min-height: 76px; margin: 0; padding: 10px 8px; border-radius: 12px; border-bottom: 1px solid #eceaf0; background: transparent; text-align: left; }
+  .conversation.active { background: #eef1f7; }
+  .conversation .avatar { width: 52px; height: 52px; font-size: 14px; }
+  .conversation-copy { gap: 4px; padding-right: 8px; }
+  .conversation-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .conversation-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .conversation time { align-self: center; color: #8c9099; font-size: 11px; }
+  body.dark-theme .conversation { border-color: #303238; background: transparent; }
+  body.dark-theme .conversation.active { background: #202b3a; }
+}
