@@ -103,6 +103,9 @@ document.getElementById('menuLogoutButton').addEventListener('click', logout);
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
+document.getElementById('mobileBackButton').addEventListener('click', () => {
+  document.getElementById('appShell').classList.remove('mobile-chat-open');
+});
 document.getElementById('requestsButton').addEventListener('click', async () => {
   await openContacts();
   document.getElementById('friendRequestsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -207,6 +210,7 @@ function selectContact(contact) {
   document.getElementById('chatContactStatus').textContent = contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
   clearChatArea();
   closeContacts();
+  document.getElementById('appShell').classList.add('mobile-chat-open');
   activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
   if (socket.connected) socket.emit('join-room', { peerId: contact.id });
 }
@@ -271,6 +275,7 @@ function enterApp(user) {
   }).catch(() => {});
   loadConversations().catch(() => {});
   authScreen.classList.remove('visible');
+  document.getElementById('appShell').classList.remove('mobile-chat-open');
   if (!socket.connected) socket.connect();
 }
 
@@ -319,7 +324,7 @@ async function startCall(mode) {
     createPeerConnection();
     socket.emit('call-user', { mode });
     callStatus.textContent = 'Calling...';
-    voiceStatus.textContent = 'Waiting for Alex to answer';
+    voiceStatus.textContent = 'กำลังรอเพื่อนรับสาย';
   } catch (error) {
     endCall(false);
     showToast(error.name === 'NotAllowedError' ? 'Camera or microphone permission was denied' : 'Media devices are not available');
@@ -415,7 +420,10 @@ function renderMessage(message) {
   loadConversations().catch(() => {});
 }
 
-function formatTime(timestamp) { return new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp)); }
+function formatTime(timestamp) {
+  const value = typeof timestamp === 'string' && !timestamp.includes('T') && !timestamp.endsWith('Z') ? `${timestamp.replace(' ', 'T')}Z` : timestamp;
+  return new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', hour: 'numeric', minute: '2-digit' }).format(new Date(value));
+}
 function openCallModal(title, status) { const contactName = selectedContact?.username || 'เพื่อน'; callTitle.textContent = contactName; callStatus.textContent = title; voiceStatus.textContent = status; callModal.classList.add('visible'); callModal.setAttribute('aria-hidden', 'false'); }
 function updateCallStatus(status) { callStatus.textContent = status; voiceStatus.textContent = status; }
 function showLocalMedia() { localVideo.srcObject = localStream; localVideo.classList.toggle('hidden', activeCallMode !== 'video'); remoteVideo.classList.toggle('hidden', activeCallMode !== 'video'); voicePlaceholder.classList.toggle('hidden', activeCallMode === 'video'); }
