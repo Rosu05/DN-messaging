@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
   <link rel="stylesheet" href="/style.css?v=20260922">
+  <style>.incoming-action { display: none; } .incoming-action.visible { display: grid; }</style>
 </head>
 <body>
   <section class="auth-screen visible" id="authScreen" aria-labelledby="authTitle">
@@ -82,13 +83,13 @@
     <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">
       <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
       <div class="notes-strip"><button class="note-card own-note"><span class="note-avatar" id="noteAvatar">U</span><strong>Your note</strong></button><div id="friendNotes" class="friend-notes"></div></div>
-      <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div></div>
+      <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div><h3>ผู้ใช้ที่บล็อก</h3><div id="blockedList" class="people-list"><p class="empty-contacts">ยังไม่มีผู้ใช้ที่บล็อก</p></div></div>
     </section>
   </div>
 
   <div class="profile-menu" id="profileMenu" aria-hidden="true">
     <button type="button" class="profile-menu-item" id="settingsButton"><i class="fa-solid fa-gear"></i><span>การกำหนดลักษณะ</span></button>
-    <button type="button" class="profile-menu-item"><i class="fa-solid fa-font"></i><span>แก้ไขชื่อผู้ใช้</span></button>
+    <button type="button" class="profile-menu-item" id="editProfileButton"><i class="fa-solid fa-font"></i><span>แก้ไขโปรไฟล์</span></button>
     <button type="button" class="profile-menu-item"><i class="fa-regular fa-comment-slash"></i><span>บัญชีที่ถูกจำกัด</span></button>
     <button type="button" class="profile-menu-item danger" id="menuLogoutButton"><i class="fa-solid fa-arrow-right-from-bracket"></i><span>ออกจากระบบ</span></button>
   </div>
@@ -115,7 +116,7 @@
       <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
       <div class="voice-placeholder" id="voicePlaceholder"><div class="call-avatar">?</div><h2>เพื่อน</h2><p id="voiceStatus">Connecting...</p></div>
       <video id="localVideo" class="local-video" autoplay muted playsinline></video>
-      <div class="call-controls"><button class="call-control" id="muteButton" title="Mute microphone" aria-label="Mute microphone"><i class="fa-solid fa-microphone"></i></button><button class="call-control camera-control" id="cameraButton" title="Turn off camera" aria-label="Turn off camera"><i class="fa-solid fa-video"></i></button><button class="call-control end-call" id="endCallButton" title="End call" aria-label="End call"><i class="fa-solid fa-phone"></i></button></div>
+      <div class="call-controls"><button class="call-control incoming-action" id="acceptCallButton" title="Accept call" aria-label="Accept call"><i class="fa-solid fa-check"></i></button><button class="call-control incoming-action" id="rejectCallButton" title="Reject call" aria-label="Reject call"><i class="fa-solid fa-xmark"></i></button><button class="call-control" id="muteButton" title="Mute microphone" aria-label="Mute microphone"><i class="fa-solid fa-microphone"></i></button><button class="call-control camera-control" id="cameraButton" title="Turn off camera" aria-label="Turn off camera"><i class="fa-solid fa-video"></i></button><button class="call-control end-call" id="endCallButton" title="End call" aria-label="End call"><i class="fa-solid fa-phone"></i></button></div>
     </div>
   </div>
 

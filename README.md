@@ -11,6 +11,11 @@
 - Express static server, health check และ Docker image สำหรับ cloud deployment
 - Turso database schema สำหรับ users, rooms, room members และ message history
 - Register/login ด้วย bcrypt password hash และ httpOnly authentication cookie
+- Unread count, read status และ browser/audio notification สำหรับข้อความใหม่
+- File upload สูงสุด 10 MB ต่อไฟล์ พร้อมลิงก์ไฟล์ในข้อความ
+- Typing indicator, แก้ไข/ลบข้อความ และ call history API
+- Incoming call modal, ICE restart retry และระบบ block/unblock ผู้ใช้
+- Rate limiting สำหรับ register/login และรองรับ TURN server ผ่าน environment variables
 
 ## โครงสร้างและเทคโนโลยี
 
@@ -34,6 +39,12 @@ npm install
 npm start
 ```
 
+รัน smoke tests ก่อนส่งงานหรือ deploy:
+
+```powershell
+npm test
+```
+
 เปิด `http://localhost:3000` สอง browser windows หรือสองเครื่องใน network เดียวกันเพื่อทดสอบ chat และ call หากเปิดจากเครื่องอื่น ให้ใช้ IP ของเครื่องที่รัน server แทน `localhost`
 
 ตรวจสอบ server:
@@ -50,9 +61,16 @@ Invoke-WebRequest http://localhost:3000/health
 TURSO_DATABASE_URL=libsql://...
 TURSO_AUTH_TOKEN=...
 SESSION_SECRET=สุ่มค่าลับอย่างน้อย 32 ตัวอักษร
+TURN_SERVER_URL=turn:your-turn-server:3478,turns:your-turn-server:5349
+TURN_USERNAME=ชื่อผู้ใช้ TURN
+TURN_CREDENTIAL=รหัสผ่าน TURN
 ```
 
 เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members` และ `messages` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
+
+ไฟล์ที่อัปโหลดจะถูกเก็บในโฟลเดอร์ `uploads/` ของ container ดังนั้น production ที่ต้องการเก็บไฟล์ถาวรควรใช้ object storage หรือ mounted volume
+
+ระบบจะจำกัด signaling ของ WebRTC ให้ส่งต่อได้เฉพาะ socket ที่อยู่ในห้องเดียวกัน และจำกัด login/register ด้วย rate limit แต่การ deploy หลาย instance ยังต้องใช้ Redis adapter เพื่อให้ Socket.io กระจาย event ได้ครบทุก instance
 
 ## Cloud Deployment ด้วย Docker
 
@@ -60,6 +78,8 @@ SESSION_SECRET=สุ่มค่าลับอย่างน้อย 32 ต�
 docker compose up --build -d
 docker compose ps
 ```
+
+ก่อนรันบน production ให้กำหนด `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` และ `SESSION_SECRET` ใน environment ของ Docker Compose โดย `uploads` จะถูกเก็บใน named volume เพื่อไม่หายเมื่อ container ถูกสร้างใหม่
 
 นำ image นี้ไปใช้บน Cloud VM หรือ container platform ที่เปิด port `3000` ได้ โดยตั้งค่า `PORT` ตาม port ที่ cloud provider จัดสรร หากต้องการใช้กล้องและไมโครโฟนบน production browser ต้อง deploy ผ่าน HTTPS
 

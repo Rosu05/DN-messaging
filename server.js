@@ -1,9 +1,12 @@
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const { db, initializeDatabase } = require('./db');
 
@@ -19,9 +22,18 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
 }
 const authSecret = process.env.SESSION_SECRET || 'local-development-secret-change-me';
 const publicDirectory = path.join(__dirname, 'public');
+const uploadDirectory = path.join(__dirname, 'uploads');
+fs.mkdirSync(uploadDirectory, { recursive: true });
+const upload = multer({
+  dest: uploadDirectory,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_request, file, callback) => callback(null, /^(image\/(jpeg|png|gif|webp)|audio\/(mpeg|wav|ogg|webm)|video\/(mp4|webm)|text\/plain|application\/pdf)$/.test(file.mimetype))
+});
 
 app.use(express.json());
 app.use(express.static(publicDirectory));
+app.use('/uploads', express.static(uploadDirectory));
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
 
 function getTokenFromCookie(request) {
   const match = request.headers.cookie?.match(/(?:^|; )auth_token=([^;]+)/);
@@ -62,7 +74,7 @@ function authenticatedUserId(request) {
   }
 }
 
-app.post('/api/auth/register', async (request, response) => {
+app.post('/api/auth/register', authLimiter, async (request, response) => {
   const { username, email, password, confirmPassword } = request.body || {};
   const normalizedUsername = typeof username === 'string' ? username.trim() : '';
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
@@ -98,7 +110,7 @@ app.post('/api/auth/register', async (request, response) => {
   }
 });
 
-app.post('/api/auth/login', async (request, response) => {
+app.post('/api/auth/login', authLimiter, async (request, response) => {
   const { username, password } = request.body || {};
   const normalizedUsername = typeof username === 'string' ? username.trim() : '';
   if (!db) return response.status(503).json({ error: 'Database is not configured' });
@@ -133,6 +145,21 @@ app.post('/api/auth/logout', (_request, response) => {
   response.status(204).end();
 });
 
+app.patch('/api/profile', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const username = typeof request.body?.username === 'string' ? request.body.username.trim() : '';
+  const email = typeof request.body?.email === 'string' ? request.body.email.trim().toLowerCase() : '';
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (!/^[a-zA-Z0-9_ ]{3,40}$/.test(username) || !/^\S+@\S+\.\S+$/.test(email)) return response.status(400).json({ error: 'Invalid profile details' });
+  try {
+    await db.execute({ sql: 'UPDATE users SET username = ?, email = ? WHERE id = ?', args: [username, email, userId] });
+    response.json({ user: { id: userId, username, email } });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT' || error.message?.includes('UNIQUE')) return response.status(409).json({ error: 'Username or email is already in use' });
+    response.status(500).json({ error: 'Could not update profile' });
+  }
+});
+
 app.get('/api/contacts', async (request, response) => {
   const userId = authenticatedUserId(request);
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
@@ -140,19 +167,24 @@ app.get('/api/contacts', async (request, response) => {
     const friends = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
-        WHERE f.user_id = ? AND f.status = 'accepted' ORDER BY u.username`, args: [userId]
+        WHERE f.user_id = ? AND f.status = 'accepted'
+          AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
+        ORDER BY u.username`, args: [userId, userId, userId]
     });
     const suggestions = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
         WHERE u.id <> ? AND NOT EXISTS (
           SELECT 1 FROM friendships f WHERE (f.user_id = ? AND f.friend_id = u.id)
           OR (f.user_id = u.id AND f.friend_id = ?)
-        ) ORDER BY u.username`, args: [userId, userId, userId]
+        ) AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
+        ORDER BY u.username`, args: [userId, userId, userId, userId, userId]
     });
     const requests = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
         INNER JOIN friendships f ON f.user_id = u.id
-        WHERE f.friend_id = ? AND f.status = 'pending' ORDER BY f.created_at DESC`, args: [userId]
+        WHERE f.friend_id = ? AND f.status = 'pending'
+          AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
+        ORDER BY f.created_at DESC`, args: [userId, userId, userId]
     });
     response.json({ friends: friends.rows.map(contactView), suggestions: suggestions.rows.map(contactView), requests: requests.rows.map(contactView), requestCount: requests.rows.length });
   } catch (_error) {
@@ -167,20 +199,50 @@ app.get('/api/conversations', async (request, response) => {
     const result = await db.execute({
       sql: `SELECT u.id, u.username, u.email FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
-        WHERE f.user_id = ? AND f.status = 'accepted' ORDER BY u.username`,
-      args: [userId]
+        WHERE f.user_id = ? AND f.status = 'accepted'
+          AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
+        ORDER BY u.username`,
+      args: [userId, userId, userId]
     });
     const rows = [];
     for (const row of result.rows) {
       const roomId = directRoomId(userId, row.id);
       const latest = await db.execute({ sql: 'SELECT text AS last_text, created_at AS last_created_at FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 1', args: [roomId] });
-      rows.push({ ...contactView(row), lastText: latest.rows[0]?.last_text || '', lastCreatedAt: latest.rows[0]?.last_created_at || null });
+      const unread = await db.execute({ sql: 'SELECT COUNT(*) AS count FROM messages WHERE room_id = ? AND user_id <> ? AND read_at IS NULL', args: [roomId, userId] });
+      rows.push({ ...contactView(row), lastText: latest.rows[0]?.last_text || '', lastCreatedAt: latest.rows[0]?.last_created_at || null, unreadCount: Number(unread.rows[0]?.count || 0) });
     }
     rows.sort((first, second) => (second.lastCreatedAt || '').localeCompare(first.lastCreatedAt || ''));
     response.json({ conversations: rows });
   } catch (_error) {
     response.status(500).json({ error: 'Could not load conversations' });
   }
+});
+
+app.post('/api/conversations/:friendId/read', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const friendId = request.params.friendId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    await db.execute({ sql: "UPDATE messages SET read_at = datetime('now') WHERE room_id = ? AND user_id <> ? AND read_at IS NULL", args: [directRoomId(userId, friendId), userId] });
+    response.json({ read: true });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not mark messages as read' });
+  }
+});
+
+app.post('/api/uploads', (request, response, next) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  request.userId = userId;
+  next();
+}, upload.single('file'), async (request, response) => {
+  if (!request.file) return response.status(400).json({ error: 'A supported file is required' });
+  response.status(201).json({
+    url: `/uploads/${request.file.filename}`,
+    name: request.file.originalname,
+    type: request.file.mimetype,
+    size: request.file.size
+  });
 });
 
 app.post('/api/contacts/:friendId', async (request, response) => {
@@ -218,8 +280,76 @@ app.delete('/api/contacts/:friendId/request', async (request, response) => {
   response.status(204).end();
 });
 
+app.delete('/api/contacts/:friendId/cancel', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  await db.execute({ sql: 'DELETE FROM friendships WHERE user_id = ? AND friend_id = ? AND status = ?', args: [userId, request.params.friendId, 'pending'] });
+  response.status(204).end();
+});
+
+app.get('/api/blocked', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  const result = await db.execute({
+    sql: `SELECT u.id, u.username, u.email FROM blocked_users b INNER JOIN users u ON u.id = b.blocked_user_id WHERE b.user_id = ? ORDER BY b.created_at DESC`,
+    args: [userId]
+  });
+  response.json({ blocked: result.rows });
+});
+
+app.delete('/api/contacts/:friendId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  await db.batch([
+    { sql: 'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)', args: [userId, request.params.friendId, request.params.friendId, userId] }
+  ], 'write');
+  response.status(204).end();
+});
+
+app.post('/api/contacts/:friendId/block', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const friendId = request.params.friendId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (userId === friendId) return response.status(400).json({ error: 'You cannot block yourself' });
+  await db.batch([
+    { sql: 'INSERT OR IGNORE INTO blocked_users (user_id, blocked_user_id) VALUES (?, ?)', args: [userId, friendId] },
+    { sql: 'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)', args: [userId, friendId, friendId, userId] }
+  ], 'write');
+  response.status(204).end();
+});
+
+app.delete('/api/contacts/:friendId/block', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  await db.execute({ sql: 'DELETE FROM blocked_users WHERE user_id = ? AND blocked_user_id = ?', args: [userId, request.params.friendId] });
+  response.status(204).end();
+});
+
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', service: 'instant-messaging-networking-demo', timestamp: new Date().toISOString() });
+});
+app.get('/api/webrtc-config', (request, response) => {
+  if (!authenticatedUserId(request)) return response.status(401).json({ error: 'Authentication required' });
+  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  if (process.env.TURN_SERVER_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: process.env.TURN_SERVER_URL.split(',').map((url) => url.trim()).filter(Boolean),
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
+    });
+  }
+  response.json({ iceServers });
+});
+app.get('/api/call-history', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  const result = await db.execute({
+    sql: `SELECT c.id, c.mode, c.status, c.started_at AS startedAt, c.ended_at AS endedAt,
+      u.username AS otherUsername FROM calls c INNER JOIN users u ON u.id = CASE WHEN c.caller_id = ? THEN c.callee_id ELSE c.caller_id END
+      WHERE c.caller_id = ? OR c.callee_id = ? ORDER BY c.started_at DESC LIMIT 100`,
+    args: [userId, userId, userId]
+  });
+  response.json({ calls: result.rows });
 });
 app.get('*', (_request, response) => {
   response.sendFile(path.join(publicDirectory, 'index.html'));
@@ -246,8 +376,9 @@ io.on('connection', (socket) => {
   socket.on('join-room', async ({ peerId, selectionToken }) => {
     if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
     const membership = await db?.execute({
-      sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`,
-      args: [socket.data.userId, peerId]
+      sql: `SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = ? AND f.status = 'accepted'
+        AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = ?) OR (b.user_id = ? AND b.blocked_user_id = ?))`,
+      args: [socket.data.userId, peerId, socket.data.userId, peerId, peerId, socket.data.userId]
     });
     if (db && !membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
     const safeRoomId = directRoomId(socket.data.userId, peerId);
@@ -272,7 +403,7 @@ io.on('connection', (socket) => {
     });
     if (db) {
       const history = await db.execute({
-        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.created_at AS timestamp
+        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson, m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
           FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.created_at ASC LIMIT 200`,
         args: [safeRoomId]
       });
@@ -281,7 +412,7 @@ io.on('connection', (socket) => {
     socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
   });
 
-  socket.on('chat-message', ({ roomId, text }) => {
+  socket.on('chat-message', ({ roomId, text, attachment }) => {
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return;
 
     const message = {
@@ -292,11 +423,35 @@ io.on('connection', (socket) => {
       timestamp: new Date().toISOString()
     };
     if (!socket.data.roomId) return;
-    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text) VALUES (?, ?, ?, ?)', args: [message.id, roomForSocket(), socket.data.userId, message.text] }).catch(() => {});
+    if (attachment && typeof attachment.url === 'string' && typeof attachment.name === 'string') message.attachment = attachment;
+    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json) VALUES (?, ?, ?, ?, ?)', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null] }).catch(() => {});
     io.to(roomForSocket()).emit('chat-message', message);
   });
 
+  socket.on('typing', ({ active }) => {
+    if (!socket.data.roomId) return;
+    socket.to(roomForSocket()).emit('typing', { active: Boolean(active), username: socket.data.username || 'เพื่อน' });
+  });
+
+  socket.on('edit-message', async ({ messageId, text }) => {
+    if (typeof messageId !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 2000 || !socket.data.roomId || !db) return;
+    const updatedAt = new Date().toISOString();
+    const result = await db.execute({ sql: 'UPDATE messages SET text = ?, edited_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: [text.trim(), updatedAt, messageId, socket.data.userId, roomForSocket()] });
+    if (result.rowsAffected) io.to(roomForSocket()).emit('message-edited', { messageId, text: text.trim(), editedAt: updatedAt });
+  });
+
+  socket.on('delete-message', async ({ messageId }) => {
+    if (typeof messageId !== 'string' || !socket.data.roomId || !db) return;
+    const deletedAt = new Date().toISOString();
+    const result = await db.execute({ sql: 'UPDATE messages SET text = ?, attachment_json = NULL, deleted_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: ['ข้อความถูกลบแล้ว', deletedAt, messageId, socket.data.userId, roomForSocket()] });
+    if (result.rowsAffected) io.to(roomForSocket()).emit('message-deleted', { messageId, deletedAt });
+  });
+
   socket.on('call-user', ({ mode }) => {
+    if (!socket.data.roomId) return;
+    const target = [...(io.sockets.adapter.rooms.get(roomForSocket()) || [])].find((socketId) => socketId !== socket.id);
+    socket.data.callId = crypto.randomUUID();
+    if (db && target) db.execute({ sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)', args: [socket.data.callId, roomForSocket(), socket.data.userId, io.sockets.sockets.get(target)?.data.userId, mode === 'audio' ? 'audio' : 'video', 'ringing'] }).catch(() => {});
     socket.to(roomForSocket()).emit('incoming-call', {
       callerId: socket.id,
       callerName: socket.data.username || 'Guest',
@@ -306,16 +461,19 @@ io.on('connection', (socket) => {
 
   // These signaling packets carry SDP and ICE metadata only. WebRTC media does
   // not pass through this Node process after the peer connection is established.
-  for (const eventName of ['call-accepted', 'webrtc-offer', 'webrtc-answer', 'ice-candidate']) {
+  for (const eventName of ['call-accepted', 'call-rejected', 'webrtc-offer', 'webrtc-answer', 'ice-candidate']) {
     socket.on(eventName, ({ targetId, ...payload }) => {
-      if (typeof targetId === 'string') {
-        io.to(targetId).emit(eventName, { senderId: socket.id, ...payload });
-      }
+      if (typeof targetId !== 'string' || !socket.data.roomId) return;
+      const targetSocket = io.sockets.sockets.get(targetId);
+      if (!targetSocket || targetSocket.data.roomId !== socket.data.roomId) return;
+      targetSocket.emit(eventName, { senderId: socket.id, ...payload });
     });
   }
 
   socket.on('end-call', () => {
+    if (db && socket.data.callId) db.execute({ sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE id = ?", args: [socket.data.callId] }).catch(() => {});
     if (socket.data.roomId) socket.to(roomForSocket()).emit('call-ended');
+    socket.data.callId = null;
   });
 
   socket.on('disconnecting', () => {

@@ -34,6 +34,10 @@ async function initializeDatabase() {
       room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       text TEXT NOT NULL,
+      attachment_json TEXT,
+      read_at TEXT,
+      edited_at TEXT,
+      deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     `CREATE TABLE IF NOT EXISTS friendships (
@@ -44,6 +48,23 @@ async function initializeDatabase() {
       PRIMARY KEY (user_id, friend_id),
       CHECK (user_id <> friend_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS blocked_users (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      blocked_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, blocked_user_id),
+      CHECK (user_id <> blocked_user_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS calls (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      caller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      callee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL CHECK (mode IN ('audio', 'video')),
+      status TEXT NOT NULL CHECK (status IN ('ringing', 'answered', 'rejected', 'ended', 'missed')),
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at TEXT
+    )`,
     'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)'
   ], 'write');
 
@@ -51,6 +72,23 @@ async function initializeDatabase() {
     await db.execute("ALTER TABLE friendships ADD COLUMN status TEXT NOT NULL DEFAULT 'accepted'");
   } catch (error) {
     if (!error.message?.includes('duplicate column name')) throw error;
+  }
+  try {
+    await db.execute('ALTER TABLE messages ADD COLUMN read_at TEXT');
+  } catch (error) {
+    if (!error.message?.includes('duplicate column name')) throw error;
+  }
+  try {
+    await db.execute('ALTER TABLE messages ADD COLUMN attachment_json TEXT');
+  } catch (error) {
+    if (!error.message?.includes('duplicate column name')) throw error;
+  }
+  for (const column of ['edited_at', 'deleted_at']) {
+    try {
+      await db.execute(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
+    } catch (error) {
+      if (!error.message?.includes('duplicate column name')) throw error;
+    }
   }
 
   console.log('Turso database schema is ready.');

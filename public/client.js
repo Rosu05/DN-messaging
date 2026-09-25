@@ -4,8 +4,6 @@ let selectedContact = null;
 let activeRoomId = null;
 let chatSelectionToken = 0;
 let isRegisterMode = false;
-const rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
 const chatArea = document.getElementById('chatArea');
 const messageForm = document.getElementById('messageForm');
 const messageInput = document.getElementById('messageInput');
@@ -34,6 +32,28 @@ const profileButton = document.getElementById('profileButton');
 const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
 const contactsModal = document.getElementById('contactsModal');
+const acceptCallButton = document.getElementById('acceptCallButton');
+const rejectCallButton = document.getElementById('rejectCallButton');
+const soundToggle = document.querySelector('.settings-row input[type="checkbox"]:not(#activeStatusToggle)');
+const doNotDisturbToggle = document.querySelectorAll('.settings-row input[type="checkbox"]')[2];
+
+function loadPreferences() {
+  const preferences = JSON.parse(localStorage.getItem('direct-preferences') || '{}');
+  document.body.classList.toggle('dark-theme', preferences.theme === 'dark');
+  const themeInput = document.querySelector(`input[name="theme"][value="${preferences.theme || 'light'}"]`);
+  if (themeInput) themeInput.checked = true;
+  if (soundToggle) soundToggle.checked = preferences.sound !== false;
+  if (doNotDisturbToggle) doNotDisturbToggle.checked = preferences.doNotDisturb === true;
+}
+
+function savePreferences() {
+  const theme = document.querySelector('input[name="theme"]:checked')?.value || 'light';
+  localStorage.setItem('direct-preferences', JSON.stringify({
+    theme,
+    sound: soundToggle?.checked !== false,
+    doNotDisturb: doNotDisturbToggle?.checked === true
+  }));
+}
 
 document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.mobile-nav-button').forEach((item) => item.classList.remove('active'));
@@ -53,10 +73,15 @@ document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEve
 
 let peerConnection = null;
 let localStream = null;
+let pendingIceCandidates = [];
 let activePeerId = null;
 let activeCallMode = 'video';
 let isCaller = false;
+let pendingIncomingCall = null;
+let reconnectAttempts = 0;
 let toastTimer = null;
+let rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+let typingTimer = null;
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -114,9 +139,23 @@ document.getElementById('activeStatusToggle').addEventListener('change', (event)
 });
 document.querySelectorAll('input[name="theme"]').forEach((input) => input.addEventListener('change', (event) => {
   document.body.classList.toggle('dark-theme', event.target.value === 'dark');
+  savePreferences();
 }));
+soundToggle?.addEventListener('change', savePreferences);
+doNotDisturbToggle?.addEventListener('change', savePreferences);
 
 document.getElementById('menuLogoutButton').addEventListener('click', logout);
+document.getElementById('editProfileButton').addEventListener('click', async () => {
+  const username = window.prompt('Username', currentUser?.username || '');
+  if (!username) return;
+  const email = window.prompt('Email', currentUser?.email || '');
+  if (!email) return;
+  const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, email }) });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'แก้ไขโปรไฟล์ไม่สำเร็จ');
+  enterApp(result.user);
+  showToast('อัปเดตโปรไฟล์แล้ว');
+});
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
@@ -133,7 +172,8 @@ document.getElementById('attachButton').addEventListener('click', () => {
 });
 document.getElementById('attachmentInput').addEventListener('change', (event) => {
   const file = event.target.files[0];
-  if (file) showToast(`เลือกไฟล์ ${file.name} แล้ว แต่การส่งไฟล์ยังไม่เปิดใช้งาน`);
+  if (!file || !selectedContact || !socket.connected) return;
+  uploadAttachment(file).finally(() => { event.target.value = ''; });
 });
 document.getElementById('requestsButton').addEventListener('click', async () => {
   setMessageTab('requests');
@@ -164,10 +204,23 @@ async function openContacts() {
     renderFriendNotes(result.friends);
     renderInboxNotes(result.friends);
     renderFriendRequests(result.requests);
+    await loadBlockedUsers();
     setContactBadge(result.requestCount);
   } catch (_error) {
     document.getElementById('friendsList').innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
   }
+}
+
+async function loadBlockedUsers() {
+  const container = document.getElementById('blockedList');
+  const response = await fetch('/api/blocked');
+  if (!response.ok) return;
+  const { blocked } = await response.json();
+  container.innerHTML = blocked.length ? blocked.map((person) => `<div class="person-row"><span class="person-avatar">${person.username.slice(0, 2).toUpperCase()}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>ผู้ใช้ที่ถูกบล็อก</small></span><button class="request-action accept" data-unblock-id="${person.id}">เลิกบล็อก</button></div>`).join('') : '<p class="empty-contacts">ยังไม่มีผู้ใช้ที่บล็อก</p>';
+  container.querySelectorAll('[data-unblock-id]').forEach((button) => button.addEventListener('click', async () => {
+    const unblockResponse = await fetch(`/api/contacts/${button.dataset.unblockId}/block`, { method: 'DELETE' });
+    if (unblockResponse.ok) { showToast('เลิกบล็อกแล้ว'); openContacts(); }
+  }));
 }
 
 async function refreshFriendRequestBadge() {
@@ -209,11 +262,32 @@ function renderPeople(elementId, people, showAddButton) {
   }
   container.innerHTML = people.map((person) => {
     const initials = person.username.slice(0, 2).toUpperCase();
-    return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${showAddButton ? 'แนะนำสำหรับคุณ' : 'เพื่อนของคุณ'}</small></span>${showAddButton ? '<span class="add-person">เพิ่ม</span>' : '<i class="fa-solid fa-chevron-right"></i>'}</button>`;
+    if (showAddButton) return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>แนะนำสำหรับคุณ</small></span><span class="add-person">เพิ่ม</span></button>`;
+    return `<div class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>เพื่อนของคุณ</small></span><button class="contact-action remove" data-action="remove" title="ลบเพื่อน" aria-label="ลบเพื่อน"><i class="fa-solid fa-user-minus"></i></button><button class="contact-action block" data-action="block" title="บล็อกผู้ใช้" aria-label="บล็อกผู้ใช้"><i class="fa-solid fa-ban"></i></button></div>`;
   }).join('');
   container.querySelectorAll('.person-row').forEach((row) => {
-    row.addEventListener('click', () => showAddButton ? addFriend(row.dataset.userId) : selectContact(people.find((person) => person.id === row.dataset.userId)));
+    row.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'remove') return updateContact(row.dataset.userId, 'remove');
+      if (action === 'block') return updateContact(row.dataset.userId, 'block');
+      if (showAddButton) addFriend(row.dataset.userId);
+      else selectContact(people.find((person) => person.id === row.dataset.userId));
+    });
   });
+}
+
+async function updateContact(friendId, action) {
+  const confirmed = window.confirm(action === 'block' ? 'บล็อกผู้ใช้นี้ใช่ไหม' : 'ลบเพื่อนคนนี้ใช่ไหม');
+  if (!confirmed) return;
+  const response = await fetch(`/api/contacts/${friendId}${action === 'block' ? '/block' : ''}`, { method: action === 'block' ? 'POST' : 'DELETE' });
+  if (!response.ok) return showToast('ดำเนินการไม่สำเร็จ');
+  if (selectedContact?.id === friendId) {
+    selectedContact = null;
+    document.getElementById('appShell').classList.remove('mobile-chat-open');
+  }
+  showToast(action === 'block' ? 'บล็อกผู้ใช้แล้ว' : 'ลบเพื่อนแล้ว');
+  openContacts();
+  loadConversations().catch(() => {});
 }
 
 function renderFriendNotes(friends) {
@@ -259,6 +333,7 @@ function selectContact(contact) {
   closeContacts();
   document.getElementById('appShell').classList.add('mobile-chat-open');
   activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
+  fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => loadConversations()).catch(() => {});
   if (socket.connected) socket.emit('join-room', { peerId: contact.id, selectionToken: chatSelectionToken });
 }
 
@@ -272,7 +347,7 @@ function renderConversationList(conversations) {
     container.innerHTML = '<div class="conversation-empty">ยังไม่มีประวัติแชท เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div>';
     return;
   }
-  container.innerHTML = conversations.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}"><span class="avatar violet">${person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.username)}</strong><span>${escapeHtml(person.lastText || 'เริ่มการสนทนา')}</span></span><time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
+  container.innerHTML = conversations.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}"><span class="avatar violet">${person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.username)}</strong><span>${escapeHtml(person.lastText || 'เริ่มการสนทนา')}</span></span>${person.unreadCount ? `<b class="unread-count">${person.unreadCount > 99 ? '99+' : person.unreadCount}</b>` : ''}<time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
   container.querySelectorAll('[data-conversation-id]').forEach((button) => button.addEventListener('click', async () => {
     const response = await fetch('/api/contacts');
     const result = await response.json();
@@ -325,7 +400,7 @@ function enterApp(user) {
   loadConversations().catch(() => {});
   authScreen.classList.remove('visible');
   document.getElementById('appShell').classList.remove('mobile-chat-open');
-  if (!socket.connected) socket.connect();
+  if (!socket.connected) loadWebRtcConfig().finally(() => socket.connect());
 }
 
 socket.on('connect', () => {
@@ -338,7 +413,11 @@ socket.on('room-joined', ({ participantCount }) => {
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
 socket.on('chat-history', ({ messages, selectionToken }) => {
   if (selectionToken !== chatSelectionToken) return;
-  messages.forEach((message) => renderMessage(message));
+  messages.forEach((message) => {
+    let attachment = null;
+    try { attachment = message.attachmentJson ? JSON.parse(message.attachmentJson) : null; } catch (_error) {}
+    renderMessage({ ...message, attachment, deleted: Boolean(message.deletedAt), edited: Boolean(message.editedAt) });
+  });
 });
 socket.on('chat-error', ({ message }) => showToast(message));
 socket.on('peer-left', () => { if (callModal.classList.contains('visible')) endCall(false); });
@@ -352,18 +431,77 @@ messageForm.addEventListener('submit', (event) => {
   messageInput.focus();
 });
 
+messageInput.addEventListener('input', () => {
+  if (!socket.connected || !selectedContact) return;
+  socket.emit('typing', { active: true });
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => socket.emit('typing', { active: false }), 900);
+});
+
+async function uploadAttachment(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const response = await fetch('/api/uploads', { method: 'POST', body: formData });
+    const attachment = await response.json();
+    if (!response.ok) throw new Error(attachment.error || 'อัปโหลดไฟล์ไม่สำเร็จ');
+    socket.emit('chat-message', { text: attachment.name, attachment });
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 document.getElementById('heartButton').addEventListener('click', () => {
   if (socket.connected && selectedContact) socket.emit('chat-message', { text: '❤️' });
 });
 
 socket.on('chat-message', (message) => {
+  socket.emit('typing', { active: false });
   renderMessage(message);
   loadConversations().catch(() => {});
+  if (message.senderId !== currentUser?.id && (!selectedContact || message.senderId !== selectedContact.id)) notifyIncomingMessage(message);
 });
+socket.on('message-edited', ({ messageId, text, editedAt }) => {
+  const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (!row) return;
+  row.querySelector('.message-bubble').textContent = text;
+  row.querySelector('.message-meta').textContent = `${formatTime(editedAt)} (แก้ไขแล้ว)`;
+});
+socket.on('message-deleted', ({ messageId }) => {
+  const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (!row) return;
+  row.querySelector('.message-bubble').textContent = 'ข้อความถูกลบแล้ว';
+  row.querySelector('.message-actions')?.remove();
+});
+socket.on('typing', ({ active, username }) => {
+  if (!selectedContact) return;
+  document.getElementById('chatContactStatus').textContent = active ? `${username} กำลังพิมพ์...` : (selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์');
+});
+
+function notifyIncomingMessage(message) {
+  const preferences = JSON.parse(localStorage.getItem('direct-preferences') || '{}');
+  if (preferences.doNotDisturb) return;
+  if (preferences.sound !== false) {
+    try {
+      const context = new AudioContext();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.connect(gain); gain.connect(context.destination);
+      oscillator.frequency.value = 660; gain.gain.value = 0.04;
+      oscillator.start(); oscillator.stop(context.currentTime + 0.08);
+    } catch (_error) {}
+  }
+  if (document.hidden && 'Notification' in window) {
+    if (Notification.permission === 'granted') new Notification(message.senderName || 'ข้อความใหม่', { body: message.text });
+    else if (Notification.permission === 'default') Notification.requestPermission();
+  }
+}
 
 document.getElementById('audioCallButton').addEventListener('click', () => startCall('audio'));
 document.getElementById('videoCallButton').addEventListener('click', () => startCall('video'));
 document.getElementById('endCallButton').addEventListener('click', () => endCall(true));
+acceptCallButton.addEventListener('click', acceptIncomingCall);
+rejectCallButton.addEventListener('click', rejectIncomingCall);
 document.getElementById('muteButton').addEventListener('click', toggleMicrophone);
 document.getElementById('cameraButton').addEventListener('click', toggleCamera);
 
@@ -389,15 +527,19 @@ async function startCall(mode) {
 
 socket.on('incoming-call', async ({ callerId, callerName, mode }) => {
   if (peerConnection) return;
-  const accepted = window.confirm(`${callerName} is calling. Accept ${mode} call?`);
-  if (!accepted) {
-    socket.emit('end-call');
-    return;
-  }
   activePeerId = callerId;
   activeCallMode = mode;
   isCaller = false;
-  openCallModal('Incoming call', 'Connecting...');
+  pendingIncomingCall = { callerId, callerName, mode };
+  openCallModal('Incoming call', `${callerName} กำลังโทรเข้า`);
+  acceptCallButton.classList.add('visible');
+  rejectCallButton.classList.add('visible');
+});
+
+async function acceptIncomingCall() {
+  if (!pendingIncomingCall) return;
+  const { callerId, mode } = pendingIncomingCall;
+  pendingIncomingCall = null;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
     showLocalMedia();
@@ -407,11 +549,18 @@ socket.on('incoming-call', async ({ callerId, callerName, mode }) => {
     endCall(true);
     showToast(error.name === 'NotAllowedError' ? 'Camera or microphone permission was denied' : 'Media devices are not available');
   }
-});
+}
+
+function rejectIncomingCall() {
+  if (pendingIncomingCall) socket.emit('call-rejected', { targetId: pendingIncomingCall.callerId });
+  pendingIncomingCall = null;
+  endCall(false);
+}
 
 // The caller creates an SDP offer after the callee has accepted the call.
 socket.on('call-accepted', async ({ senderId }) => {
   activePeerId = senderId;
+  reconnectAttempts = 0;
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
   socket.emit('webrtc-offer', { targetId: senderId, description: peerConnection.localDescription });
@@ -419,7 +568,7 @@ socket.on('call-accepted', async ({ senderId }) => {
 
 socket.on('webrtc-offer', async ({ senderId, description }) => {
   activePeerId = senderId;
-  await peerConnection.setRemoteDescription(description);
+  await setRemoteDescription(description);
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
   socket.emit('webrtc-answer', { targetId: senderId, description: peerConnection.localDescription });
@@ -427,14 +576,24 @@ socket.on('webrtc-offer', async ({ senderId, description }) => {
 });
 
 socket.on('webrtc-answer', async ({ description }) => {
-  await peerConnection.setRemoteDescription(description);
+  await setRemoteDescription(description);
   updateCallStatus('Connected');
+});
+
+socket.on('call-rejected', () => {
+  endCall(false);
+  showToast('เพื่อนปฏิเสธสาย');
 });
 
 // ICE candidates describe reachable network paths. STUN helps peers discover
 // public addresses; the media packets then flow directly over UDP when possible.
 socket.on('ice-candidate', async ({ candidate }) => {
-  if (peerConnection && candidate) await peerConnection.addIceCandidate(candidate);
+  if (!peerConnection || !candidate) return;
+  if (!peerConnection.remoteDescription) {
+    pendingIceCandidates.push(candidate);
+    return;
+  }
+  await peerConnection.addIceCandidate(candidate);
 });
 
 socket.on('call-ended', () => {
@@ -443,6 +602,7 @@ socket.on('call-ended', () => {
 });
 
 function createPeerConnection() {
+  pendingIceCandidates = [];
   peerConnection = new RTCPeerConnection(rtcConfiguration);
   localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
   peerConnection.onicecandidate = ({ candidate }) => {
@@ -455,8 +615,22 @@ function createPeerConnection() {
   };
   peerConnection.onconnectionstatechange = () => {
     if (peerConnection.connectionState === 'connected') updateCallStatus('Connected');
-    if (['failed', 'disconnected'].includes(peerConnection.connectionState)) updateCallStatus('Connection interrupted');
+    if (peerConnection.connectionState === 'failed' && isCaller && reconnectAttempts < 1) {
+      reconnectAttempts += 1;
+      updateCallStatus('Reconnecting...');
+      peerConnection.createOffer({ iceRestart: true }).then(async (offer) => {
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('webrtc-offer', { targetId: activePeerId, description: peerConnection.localDescription });
+      }).catch(() => updateCallStatus('Connection interrupted'));
+    } else if (['failed', 'disconnected'].includes(peerConnection.connectionState)) updateCallStatus('Connection interrupted');
   };
+}
+
+async function setRemoteDescription(description) {
+  await peerConnection.setRemoteDescription(description);
+  const candidates = pendingIceCandidates;
+  pendingIceCandidates = [];
+  await Promise.all(candidates.map((candidate) => peerConnection.addIceCandidate(candidate)));
 }
 
 function renderMessage(message) {
@@ -464,13 +638,35 @@ function renderMessage(message) {
   if (!selectedContact) return;
   const row = document.createElement('div');
   row.className = `message-row${isMine ? ' mine' : ''}`;
+  row.dataset.messageId = message.id;
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  bubble.textContent = message.text;
+  bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
+  if (message.attachment?.url) {
+    const link = document.createElement('a');
+    link.href = message.attachment.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = `เปิดไฟล์: ${message.attachment.name}`;
+    bubble.append(document.createElement('br'), link);
+  }
   const meta = document.createElement('time');
   meta.className = 'message-meta';
   meta.textContent = formatTime(message.timestamp);
   row.append(bubble, meta);
+  if (isMine && !message.deleted) {
+    const actions = document.createElement('span');
+    actions.className = 'message-actions';
+    actions.innerHTML = '<button type="button" data-message-action="edit" title="แก้ไขข้อความ">แก้ไข</button><button type="button" data-message-action="delete" title="ลบข้อความ">ลบ</button>';
+    actions.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
+      const text = window.prompt('แก้ไขข้อความ', message.text);
+      if (text?.trim() && socket.connected) socket.emit('edit-message', { messageId: message.id, text });
+    });
+    actions.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
+      if (window.confirm('ลบข้อความนี้ใช่ไหม')) socket.emit('delete-message', { messageId: message.id });
+    });
+    row.append(actions);
+  }
   chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -487,7 +683,8 @@ function endCall(notifyPeer) {
   if (notifyPeer && socket.connected) socket.emit('end-call');
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
-  peerConnection = null; localStream = null; activePeerId = null; isCaller = false;
+  peerConnection = null; localStream = null; activePeerId = null; isCaller = false; pendingIceCandidates = [];
+  pendingIncomingCall = null; acceptCallButton.classList.remove('visible'); rejectCallButton.classList.remove('visible');
   remoteVideo.srcObject = null; localVideo.srcObject = null;
   callModal.classList.remove('visible'); callModal.setAttribute('aria-hidden', 'true');
 }
@@ -508,5 +705,18 @@ function toggleCamera() {
 }
 function showToast(message) { toast.textContent = message; toast.classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('visible'), 2800); }
 
+async function loadWebRtcConfig() {
+  try {
+    const response = await fetch('/api/webrtc-config');
+    if (response.ok) {
+      const config = await response.json();
+      if (config.iceServers?.length) rtcConfiguration = { iceServers: config.iceServers };
+    }
+  } catch (_error) {
+    // STUN remains available when optional TURN configuration is unavailable.
+  }
+}
+
 bootstrapAuth().catch(() => showToast('Could not check your session'));
+loadPreferences();
 setInterval(refreshFriendRequestBadge, 15000);

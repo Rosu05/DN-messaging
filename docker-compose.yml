@@ -4,11 +4,22 @@ services:
     ports:
       - "3000:3000"
     environment:
-      PORT: 3000
-      NODE_ENV: production
+      PORT: ${PORT:-3000}
+      NODE_ENV: ${NODE_ENV:-production}
+      TURSO_DATABASE_URL: ${TURSO_DATABASE_URL}
+      TURSO_AUTH_TOKEN: ${TURSO_AUTH_TOKEN}
+      SESSION_SECRET: ${SESSION_SECRET}
+      TURN_SERVER_URL: ${TURN_SERVER_URL:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+    volumes:
+      - uploads:/app/uploads
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  uploads:

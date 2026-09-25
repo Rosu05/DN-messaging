@@ -4,7 +4,8 @@
   "description": "Instant messaging, WebRTC calling, and cloud deployment demo for Data Networking.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -13,7 +14,9 @@
     "@libsql/client": "^0.18.0",
     "bcryptjs": "^3.0.3",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
     "socket.io": "^4.8.1"
   }
 }
