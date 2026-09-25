@@ -70,6 +70,9 @@ document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEve
     setTimeout(() => document.querySelector('.search-box input').focus(), 0);
   }
 }));
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.message-tools')) document.querySelectorAll('.message-tools.open').forEach((item) => item.classList.remove('open'));
+});
 
 let peerConnection = null;
 let localStream = null;
@@ -655,17 +658,24 @@ function renderMessage(message) {
   meta.textContent = formatTime(message.timestamp);
   row.append(bubble, meta);
   if (isMine && !message.deleted) {
-    const actions = document.createElement('span');
-    actions.className = 'message-actions';
-    actions.innerHTML = '<button type="button" data-message-action="edit" title="แก้ไขข้อความ">แก้ไข</button><button type="button" data-message-action="delete" title="ลบข้อความ">ลบ</button>';
-    actions.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
+    const tools = document.createElement('div');
+    tools.className = 'message-tools';
+    tools.innerHTML = '<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button></div>';
+    tools.querySelector('.message-more').addEventListener('click', (event) => {
+      event.stopPropagation();
+      document.querySelectorAll('.message-tools.open').forEach((item) => { if (item !== tools) item.classList.remove('open'); });
+      tools.classList.toggle('open');
+    });
+    tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
       const text = window.prompt('แก้ไขข้อความ', message.text);
       if (text?.trim() && socket.connected) socket.emit('edit-message', { messageId: message.id, text });
+      tools.classList.remove('open');
     });
-    actions.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
+    tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
       if (window.confirm('ลบข้อความนี้ใช่ไหม')) socket.emit('delete-message', { messageId: message.id });
+      tools.classList.remove('open');
     });
-    row.append(actions);
+    row.append(tools);
   }
   chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
