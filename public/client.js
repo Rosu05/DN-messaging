@@ -15,6 +15,9 @@ const remoteVideo = document.getElementById('remoteVideo');
 const localVideo = document.getElementById('localVideo');
 const voicePlaceholder = document.getElementById('voicePlaceholder');
 const toast = document.getElementById('toast');
+const deleteConfirmModal = document.getElementById('deleteConfirmModal');
+const confirmDeleteButton = document.getElementById('confirmDeleteButton');
+const cancelDeleteButton = document.getElementById('cancelDeleteButton');
 const authScreen = document.getElementById('authScreen');
 const authForm = document.getElementById('authForm');
 const authTitle = document.getElementById('authTitle');
@@ -73,6 +76,15 @@ document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEve
 document.addEventListener('click', (event) => {
   if (!event.target.closest('.message-tools')) document.querySelectorAll('.message-tools.open').forEach((item) => item.classList.remove('open'));
 });
+cancelDeleteButton.addEventListener('click', closeDeleteConfirm);
+deleteConfirmModal.addEventListener('click', (event) => { if (event.target === deleteConfirmModal) closeDeleteConfirm(); });
+confirmDeleteButton.addEventListener('click', () => {
+  if (pendingDeleteMessageId && socket.connected) socket.emit('delete-message', { messageId: pendingDeleteMessageId });
+  closeDeleteConfirm();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && deleteConfirmModal.classList.contains('visible')) closeDeleteConfirm();
+});
 
 let peerConnection = null;
 let localStream = null;
@@ -89,6 +101,7 @@ let typingTimer = null;
 let replyToMessageId = null;
 let oldestMessageTimestamp = null;
 let searchRequestId = 0;
+let pendingDeleteMessageId = null;
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -727,7 +740,7 @@ function renderMessage(message) {
       tools.classList.remove('open');
     });
     tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
-      if (window.confirm('ลบข้อความนี้ใช่ไหม')) socket.emit('delete-message', { messageId: message.id });
+      openDeleteConfirm(message.id);
       tools.classList.remove('open');
     });
     row.append(tools);
@@ -749,6 +762,19 @@ function renderMessage(message) {
     chatArea.appendChild(row);
     chatArea.scrollTop = chatArea.scrollHeight;
   }
+}
+
+function openDeleteConfirm(messageId) {
+  pendingDeleteMessageId = messageId;
+  deleteConfirmModal.classList.add('visible');
+  deleteConfirmModal.setAttribute('aria-hidden', 'false');
+  confirmDeleteButton.focus();
+}
+
+function closeDeleteConfirm() {
+  pendingDeleteMessageId = null;
+  deleteConfirmModal.classList.remove('visible');
+  deleteConfirmModal.setAttribute('aria-hidden', 'true');
 }
 
 function renderReactions(row, reactions) {

@@ -151,4 +151,14 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .message-reactions { align-self: end; margin: 0 -8px -5px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 11px; }
 .message-reaction-button { align-self: end; padding: 2px 5px; border-radius: 10px; opacity: 0; background: var(--soft); font-size: 11px; }
 .message-row:hover .message-reaction-button { opacity: 1; }
+.confirm-modal { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; padding: 18px; background: rgba(8, 10, 15, .68); backdrop-filter: blur(8px); }
+.confirm-modal.visible { display: grid; animation: fade-in .16s ease both; }
+.confirm-sheet { width: min(430px, 100%); overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; color: #f4f4f6; background: #22252b; box-shadow: 0 24px 70px rgba(0,0,0,.4); text-align: center; }
+.confirm-sheet h2 { margin: 28px 22px 8px; font: 600 19px 'Space Grotesk', sans-serif; }
+.confirm-sheet p { margin: 0 26px 26px; color: #aeb1b8; font-size: 12px; line-height: 1.45; }
+.confirm-actions { display: grid; border-top: 1px solid #383b42; }
+.confirm-actions button { min-height: 48px; color: #f4f4f6; background: transparent; font-size: 13px; font-weight: 600; }
+.confirm-actions button + button { border-top: 1px solid #383b42; }
+.confirm-actions .confirm-danger { color: #ff5570; }
+.confirm-actions button:hover { background: rgba(255,255,255,.06); }
 .app-shell { width: 100%; max-width: none; min-height: 100dvh; margin: 0; box-shadow: none; }
