@@ -35,6 +35,7 @@ const profileButton = document.getElementById('profileButton');
 const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
 const contactsModal = document.getElementById('contactsModal');
+const homeButton = document.getElementById('homeButton');
 const acceptCallButton = document.getElementById('acceptCallButton');
 const rejectCallButton = document.getElementById('rejectCallButton');
 const soundToggle = document.querySelector('.settings-row input[type="checkbox"]:not(#activeStatusToggle)');
@@ -179,6 +180,7 @@ document.getElementById('editProfileButton').addEventListener('click', async () 
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
+homeButton.addEventListener('click', goToHome);
 document.getElementById('mobileBackButton').addEventListener('click', () => {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
 });
@@ -272,6 +274,23 @@ function setContactBadge(count) {
 function setMessageTab(tab) {
   document.getElementById('messagesTab').classList.toggle('active', tab === 'messages');
   document.getElementById('requestsButton').classList.toggle('active', tab === 'requests');
+}
+
+function goToHome() {
+  chatSelectionToken += 1;
+  selectedContact = null;
+  activeRoomId = null;
+  closeContacts();
+  closeSettings();
+  profileMenu.classList.remove('visible');
+  profileMenu.setAttribute('aria-hidden', 'true');
+  setMessageTab('messages');
+  document.querySelectorAll('.mobile-nav-button').forEach((item) => item.classList.toggle('active', item.dataset.mobileNav === 'messages'));
+  document.getElementById('appShell').classList.remove('mobile-chat-open');
+  document.getElementById('chatAvatar').textContent = '?';
+  document.getElementById('chatContactName').textContent = 'เลือกเพื่อน';
+  document.getElementById('chatContactStatus').textContent = 'พร้อมเริ่มการสนทนา';
+  chatArea.innerHTML = '<div class="date-divider"><span>วันนี้</span></div><div class="welcome-card"><div class="welcome-orb"><i class="fa-solid fa-bolt"></i></div><h3>Start the conversation</h3><p>Messages travel over a persistent TCP connection powered by Socket.io.</p></div>';
 }
 
 function closeContacts() {
