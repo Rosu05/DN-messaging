@@ -8,6 +8,8 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const { createClient } = require('redis');
 const { db, initializeDatabase } = require('./db');
 
 const app = express();
@@ -20,10 +22,11 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST']
   }
 });
+let redisClients = [];
 
 const port = process.env.PORT || 3000;
-if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
-  throw new Error('SESSION_SECRET must be configured in production');
+if (process.env.NODE_ENV === 'production' && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
+  throw new Error('SESSION_SECRET must be configured with at least 32 characters in production');
 }
 const authSecret = process.env.SESSION_SECRET || 'local-development-secret-change-me';
 const publicDirectory = path.join(__dirname, 'public');
@@ -35,9 +38,27 @@ const upload = multer({
   fileFilter: (_request, file, callback) => callback(null, /^(image\/(jpeg|png|gif|webp)|audio\/(mpeg|wav|ogg|webm)|video\/(mp4|webm)|text\/plain|application\/pdf)$/.test(file.mimetype))
 });
 
-app.use(express.json());
+app.disable('x-powered-by');
+app.use((request, response, next) => {
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'DENY');
+  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
+  if (process.env.NODE_ENV === 'production') response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+app.use((request, response, next) => {
+  if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method) && request.path.startsWith('/api/')) {
+    const origin = request.headers.origin;
+    if (origin && !allowedOrigins.includes(origin)) return response.status(403).json({ error: 'Origin is not allowed' });
+  }
+  next();
+});
+app.use(express.json({ limit: '100kb' }));
 app.use(express.static(publicDirectory));
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
+const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false });
+const searchLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false });
 
 function getTokenFromCookie(request) {
   const match = request.headers.cookie?.match(/(?:^|; )auth_token=([^;]+)/);
@@ -170,6 +191,26 @@ app.patch('/api/profile', async (request, response) => {
   }
 });
 
+app.patch('/api/profile/password', authLimiter, async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const { currentPassword, newPassword, confirmPassword } = request.body || {};
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 8 || newPassword !== confirmPassword) {
+    return response.status(400).json({ error: 'Invalid password details' });
+  }
+  try {
+    const result = await db.execute({ sql: 'SELECT password_hash AS passwordHash FROM users WHERE id = ?', args: [userId] });
+    if (!result.rows[0] || !(await bcrypt.compare(currentPassword, result.rows[0].passwordHash))) {
+      return response.status(401).json({ error: 'Current password is incorrect' });
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await db.execute({ sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [passwordHash, userId] });
+    response.status(204).end();
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not update password' });
+  }
+});
+
 app.get('/api/contacts', async (request, response) => {
   const userId = authenticatedUserId(request);
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
@@ -243,7 +284,7 @@ app.post('/api/conversations/:friendId/read', async (request, response) => {
   }
 });
 
-app.get('/api/messages/search', async (request, response) => {
+app.get('/api/messages/search', searchLimiter, async (request, response) => {
   const userId = authenticatedUserId(request);
   const query = typeof request.query.q === 'string' ? request.query.q.trim() : '';
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
@@ -292,7 +333,7 @@ app.get('/api/conversations/:friendId/messages', async (request, response) => {
   }
 });
 
-app.post('/api/uploads', (request, response, next) => {
+app.post('/api/uploads', uploadLimiter, (request, response, next) => {
   const userId = authenticatedUserId(request);
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   request.userId = userId;
@@ -411,6 +452,15 @@ app.delete('/api/contacts/:friendId/block', async (request, response) => {
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', service: 'instant-messaging-networking-demo', timestamp: new Date().toISOString() });
 });
+app.get('/ready', async (_request, response) => {
+  if (!db) return response.status(503).json({ status: 'not-ready', database: 'not-configured' });
+  try {
+    await db.execute('SELECT 1');
+    response.json({ status: 'ready', database: 'ok' });
+  } catch (_error) {
+    response.status(503).json({ status: 'not-ready', database: 'unavailable' });
+  }
+});
 app.get('/api/webrtc-config', (request, response) => {
   if (!authenticatedUserId(request)) return response.status(401).json({ error: 'Authentication required' });
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -460,6 +510,7 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const roomForSocket = () => socket.data.roomId;
+  socket.data.messageWindow = [];
 
   socket.on('join-room', async ({ peerId, selectionToken }) => {
     if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
@@ -507,6 +558,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('chat-message', async ({ text, attachment, replyTo }) => {
+    const now = Date.now();
+    socket.data.messageWindow = socket.data.messageWindow.filter((sentAt) => now - sentAt < 60_000);
+    if (socket.data.messageWindow.length >= 60) return socket.emit('chat-error', { message: 'ส่งข้อความเร็วเกินไป กรุณารอสักครู่' });
+    socket.data.messageWindow.push(now);
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return;
 
     const message = {
@@ -616,6 +671,14 @@ io.on('connection', (socket) => {
 });
 
 async function startServer() {
+  if (process.env.REDIS_URL) {
+    const pubClient = createClient({ url: process.env.REDIS_URL });
+    const subClient = pubClient.duplicate();
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    io.adapter(createAdapter(pubClient, subClient));
+    redisClients = [pubClient, subClient];
+    console.log('Socket.io Redis adapter is enabled.');
+  }
   await initializeDatabase();
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Networking demo is running on port ${port}`);
@@ -627,6 +690,19 @@ if (require.main === module) {
     console.error('Failed to initialize the database:', error);
     process.exit(1);
   });
+}
+
+async function shutdown(signal) {
+  console.log(`${signal} received, shutting down`);
+  await new Promise((resolve) => io.close(() => resolve()));
+  await new Promise((resolve) => httpServer.close(() => resolve()));
+  await Promise.all(redisClients.map((client) => client.quit().catch(() => {})));
+  process.exit(0);
+}
+
+if (require.main === module) {
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = { app, httpServer, io, startServer };
