@@ -151,3 +151,4 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .message-reactions { align-self: end; margin: 0 -8px -5px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 11px; }
 .message-reaction-button { align-self: end; padding: 2px 5px; border-radius: 10px; opacity: 0; background: var(--soft); font-size: 11px; }
 .message-row:hover .message-reaction-button { opacity: 1; }
+.app-shell { width: 100%; max-width: none; min-height: 100dvh; margin: 0; box-shadow: none; }

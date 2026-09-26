@@ -515,8 +515,7 @@ socket.on('message-edited', ({ messageId, text, editedAt }) => {
 socket.on('message-deleted', ({ messageId }) => {
   const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
   if (!row) return;
-  row.querySelector('.message-bubble').textContent = 'ข้อความถูกลบแล้ว';
-  row.querySelector('.message-actions')?.remove();
+  row.remove();
 });
 socket.on('typing', ({ active, username }) => {
   if (!selectedContact) return;

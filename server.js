@@ -249,8 +249,8 @@ app.get('/api/conversations', async (request, response) => {
   try {
     const result = await db.execute({
       sql: `SELECT u.id, u.username,
-          (SELECT m.text FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END ORDER BY m.created_at DESC LIMIT 1) AS last_text,
-          (SELECT m.created_at FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END ORDER BY m.created_at DESC LIMIT 1) AS last_created_at,
+          (SELECT m.text FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_text,
+          (SELECT m.created_at FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_created_at,
           (SELECT COUNT(*) FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.user_id <> ? AND m.read_at IS NULL) AS unread_count
         FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
@@ -323,7 +323,7 @@ app.get('/api/conversations/:friendId/messages', async (request, response) => {
         m.delivered_at AS deliveredAt, m.read_at AS readAt, m.edited_at AS editedAt,
         m.deleted_at AS deletedAt, m.created_at AS timestamp
         FROM messages m INNER JOIN users u ON u.id = m.user_id
-        WHERE m.room_id = ? ${before ? 'AND m.created_at < ?' : ''}
+        WHERE m.room_id = ? AND m.deleted_at IS NULL ${before ? 'AND m.created_at < ?' : ''}
         ORDER BY m.created_at DESC LIMIT ?`,
       args: before ? [directRoomId(userId, friendId), before, limit] : [directRoomId(userId, friendId), limit]
     });
@@ -548,7 +548,7 @@ io.on('connection', (socket) => {
         sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson,
           m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
           m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
-          FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.created_at ASC LIMIT 200`,
+          FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
         args: [safeRoomId]
       });
       await db.execute({ sql: "UPDATE messages SET delivered_at = COALESCE(delivered_at, datetime('now')) WHERE room_id = ? AND user_id <> ?", args: [safeRoomId, socket.data.userId] });
