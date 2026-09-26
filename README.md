@@ -14,7 +14,9 @@
 - Unread count, read status และ browser/audio notification สำหรับข้อความใหม่
 - File upload สูงสุด 10 MB ต่อไฟล์ พร้อมลิงก์ไฟล์ในข้อความ
 - Typing indicator, แก้ไข/ลบข้อความ และ call history API
+- ค้นหาข้อความ, โหลดประวัติแชทย้อนหลัง, reply message และ reaction
 - Incoming call modal, ICE restart retry และระบบ block/unblock ผู้ใช้
+- Busy call state และ screen sharing ระหว่าง video call
 - Rate limiting สำหรับ register/login และรองรับ TURN server ผ่าน environment variables
 
 ## โครงสร้างและเทคโนโลยี
@@ -61,6 +63,7 @@ Invoke-WebRequest http://localhost:3000/health
 TURSO_DATABASE_URL=libsql://...
 TURSO_AUTH_TOKEN=...
 SESSION_SECRET=สุ่มค่าลับอย่างน้อย 32 ตัวอักษร
+CLIENT_ORIGINS=https://your-frontend.example.com
 TURN_SERVER_URL=turn:your-turn-server:3478,turns:your-turn-server:5349
 TURN_USERNAME=ชื่อผู้ใช้ TURN
 TURN_CREDENTIAL=รหัสผ่าน TURN
@@ -68,9 +71,11 @@ TURN_CREDENTIAL=รหัสผ่าน TURN
 
 เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members` และ `messages` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
 
-ไฟล์ที่อัปโหลดจะถูกเก็บในโฟลเดอร์ `uploads/` ของ container ดังนั้น production ที่ต้องการเก็บไฟล์ถาวรควรใช้ object storage หรือ mounted volume
+ไฟล์ที่อัปโหลดจะถูกเก็บในโฟลเดอร์ `uploads/` ของ container และ route ไฟล์ต้องผ่าน authentication ดังนั้น production ที่ต้องการเก็บไฟล์ถาวรควรใช้ object storage หรือ mounted volume โดยต้องคง metadata ของ owner ไว้ด้วย
 
-ระบบจะจำกัด signaling ของ WebRTC ให้ส่งต่อได้เฉพาะ socket ที่อยู่ในห้องเดียวกัน และจำกัด login/register ด้วย rate limit แต่การ deploy หลาย instance ยังต้องใช้ Redis adapter เพื่อให้ Socket.io กระจาย event ได้ครบทุก instance
+ข้อความเก่าจะโหลดครั้งละไม่เกิน 50 รายการผ่าน `/api/conversations/:friendId/messages` และค้นหาได้ผ่าน `/api/messages/search` เฉพาะข้อความในห้องที่ผู้ใช้เป็นสมาชิกเท่านั้น
+
+ระบบจะจำกัด signaling ของ WebRTC ให้ส่งต่อได้เฉพาะ socket ที่อยู่ในห้องเดียวกัน, จำกัด Socket.io origin ด้วย `CLIENT_ORIGINS`, ตรวจ owner/member ก่อนเปิดไฟล์ และจำกัด login/register ด้วย rate limit แต่การ deploy หลาย instance ยังต้องใช้ Redis adapter เพื่อให้ Socket.io กระจาย event ได้ครบทุก instance
 
 ## Cloud Deployment ด้วย Docker
 

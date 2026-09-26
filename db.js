@@ -35,6 +35,9 @@ async function initializeDatabase() {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       text TEXT NOT NULL,
       attachment_json TEXT,
+      reply_to TEXT,
+      reaction_json TEXT,
+      delivered_at TEXT,
       read_at TEXT,
       edited_at TEXT,
       deleted_at TEXT,
@@ -65,7 +68,16 @@ async function initializeDatabase() {
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       ended_at TEXT
     )`,
-    'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)'
+    `CREATE TABLE IF NOT EXISTS uploads (
+      filename TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      original_name TEXT NOT NULL,
+      mimetype TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS uploads_user_idx ON uploads(user_id, created_at)'
   ], 'write');
 
   try {
@@ -84,6 +96,13 @@ async function initializeDatabase() {
     if (!error.message?.includes('duplicate column name')) throw error;
   }
   for (const column of ['edited_at', 'deleted_at']) {
+    try {
+      await db.execute(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
+    } catch (error) {
+      if (!error.message?.includes('duplicate column name')) throw error;
+    }
+  }
+  for (const column of ['reply_to', 'reaction_json', 'delivered_at']) {
     try {
       await db.execute(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
     } catch (error) {

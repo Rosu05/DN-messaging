@@ -76,6 +76,7 @@ document.addEventListener('click', (event) => {
 
 let peerConnection = null;
 let localStream = null;
+let screenStream = null;
 let pendingIceCandidates = [];
 let activePeerId = null;
 let activeCallMode = 'video';
@@ -85,6 +86,9 @@ let reconnectAttempts = 0;
 let toastTimer = null;
 let rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let typingTimer = null;
+let replyToMessageId = null;
+let oldestMessageTimestamp = null;
+let searchRequestId = 0;
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -183,8 +187,15 @@ document.getElementById('requestsButton').addEventListener('click', async () => 
   await openContacts();
   document.getElementById('friendRequestsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
-document.querySelector('.search-box input').addEventListener('input', (event) => {
+document.querySelector('.search-box input').addEventListener('input', async (event) => {
   const query = event.target.value.trim().toLowerCase();
+  if (query.length >= 2) {
+    const requestId = ++searchRequestId;
+    const response = await fetch(`/api/messages/search?q=${encodeURIComponent(query)}`);
+    if (requestId !== searchRequestId || !response.ok) return;
+    renderSearchResults((await response.json()).messages);
+    return;
+  }
   document.querySelectorAll('#conversationList .conversation').forEach((conversation) => {
     conversation.hidden = query && !conversation.textContent.toLowerCase().includes(query);
   });
@@ -341,7 +352,10 @@ function selectContact(contact) {
 }
 
 function clearChatArea() {
-  chatArea.innerHTML = '<div class="date-divider"><span>Today</span></div>';
+  oldestMessageTimestamp = null;
+  replyToMessageId = null;
+  chatArea.innerHTML = '<button type="button" class="load-older" id="loadOlderMessages" hidden>โหลดข้อความเก่า</button><div class="date-divider"><span>Today</span></div>';
+  document.getElementById('loadOlderMessages').addEventListener('click', loadOlderMessages);
 }
 
 function renderConversationList(conversations) {
@@ -355,6 +369,25 @@ function renderConversationList(conversations) {
     const response = await fetch('/api/contacts');
     const result = await response.json();
     const contact = result.friends.find((friend) => friend.id === button.dataset.conversationId);
+    if (contact) selectContact(contact);
+  }));
+}
+
+function renderSearchResults(messages) {
+  const container = document.getElementById('conversationList');
+  if (!messages.length) {
+    container.innerHTML = '<div class="conversation-empty">ไม่พบข้อความที่ค้นหา</div>';
+    return;
+  }
+  container.innerHTML = messages.map((message) => {
+    const ids = message.roomId.split(':').slice(1);
+    const friendId = ids.find((id) => id !== currentUser?.id) || '';
+    return `<button class="conversation search-result" data-search-contact="${friendId}"><span class="avatar violet">${escapeHtml(message.senderName.slice(0, 2).toUpperCase())}</span><span class="conversation-copy"><strong>${escapeHtml(message.senderName)}</strong><span>${escapeHtml(message.text)}</span></span><time>${formatTime(message.timestamp)}</time></button>`;
+  }).join('');
+  container.querySelectorAll('[data-search-contact]').forEach((button) => button.addEventListener('click', async () => {
+    const response = await fetch('/api/contacts');
+    if (!response.ok) return;
+    const contact = (await response.json()).friends.find((friend) => friend.id === button.dataset.searchContact);
     if (contact) selectContact(contact);
   }));
 }
@@ -416,6 +449,9 @@ socket.on('room-joined', ({ participantCount }) => {
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
 socket.on('chat-history', ({ messages, selectionToken }) => {
   if (selectionToken !== chatSelectionToken) return;
+  oldestMessageTimestamp = messages[0]?.timestamp || null;
+  const loadOlderButton = document.getElementById('loadOlderMessages');
+  if (loadOlderButton) loadOlderButton.hidden = messages.length < 200;
   messages.forEach((message) => {
     let attachment = null;
     try { attachment = message.attachmentJson ? JSON.parse(message.attachmentJson) : null; } catch (_error) {}
@@ -429,9 +465,15 @@ messageForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const text = messageInput.value.trim();
   if (!text || !socket.connected || !selectedContact) return;
-  socket.emit('chat-message', { text });
+  socket.emit('chat-message', { text, replyTo: replyToMessageId });
   messageInput.value = '';
+  replyToMessageId = null;
   messageInput.focus();
+});
+
+socket.on('message-reaction', ({ messageId, reactions }) => {
+  const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (row) renderReactions(row, reactions);
 });
 
 messageInput.addEventListener('input', () => {
@@ -507,6 +549,7 @@ acceptCallButton.addEventListener('click', acceptIncomingCall);
 rejectCallButton.addEventListener('click', rejectIncomingCall);
 document.getElementById('muteButton').addEventListener('click', toggleMicrophone);
 document.getElementById('cameraButton').addEventListener('click', toggleCamera);
+document.getElementById('shareScreenButton').addEventListener('click', shareScreen);
 
 async function startCall(mode) {
   if (peerConnection) return;
@@ -528,12 +571,12 @@ async function startCall(mode) {
   }
 }
 
-socket.on('incoming-call', async ({ callerId, callerName, mode }) => {
+socket.on('incoming-call', async ({ callerId, callId, callerName, mode }) => {
   if (peerConnection) return;
   activePeerId = callerId;
   activeCallMode = mode;
   isCaller = false;
-  pendingIncomingCall = { callerId, callerName, mode };
+  pendingIncomingCall = { callerId, callId, callerName, mode };
   openCallModal('Incoming call', `${callerName} กำลังโทรเข้า`);
   acceptCallButton.classList.add('visible');
   rejectCallButton.classList.add('visible');
@@ -541,13 +584,13 @@ socket.on('incoming-call', async ({ callerId, callerName, mode }) => {
 
 async function acceptIncomingCall() {
   if (!pendingIncomingCall) return;
-  const { callerId, mode } = pendingIncomingCall;
+  const { callerId, callId, mode } = pendingIncomingCall;
   pendingIncomingCall = null;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' });
     showLocalMedia();
     createPeerConnection();
-    socket.emit('call-accepted', { targetId: callerId });
+    socket.emit('call-accepted', { targetId: callerId, callId });
   } catch (error) {
     endCall(true);
     showToast(error.name === 'NotAllowedError' ? 'Camera or microphone permission was denied' : 'Media devices are not available');
@@ -555,7 +598,7 @@ async function acceptIncomingCall() {
 }
 
 function rejectIncomingCall() {
-  if (pendingIncomingCall) socket.emit('call-rejected', { targetId: pendingIncomingCall.callerId });
+  if (pendingIncomingCall) socket.emit('call-rejected', { targetId: pendingIncomingCall.callerId, callId: pendingIncomingCall.callId });
   pendingIncomingCall = null;
   endCall(false);
 }
@@ -586,6 +629,10 @@ socket.on('webrtc-answer', async ({ description }) => {
 socket.on('call-rejected', () => {
   endCall(false);
   showToast('เพื่อนปฏิเสธสาย');
+});
+socket.on('call-busy', () => {
+  endCall(false);
+  showToast('เพื่อนกำลังคุยสายอื่นอยู่');
 });
 
 // ICE candidates describe reachable network paths. STUN helps peers discover
@@ -645,6 +692,12 @@ function renderMessage(message) {
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
+  if (message.replyTo) {
+    const replyLabel = document.createElement('small');
+    replyLabel.className = 'message-reply';
+    replyLabel.textContent = 'ตอบกลับข้อความ';
+    bubble.prepend(replyLabel, document.createElement('br'));
+  }
   if (message.attachment?.url) {
     const link = document.createElement('a');
     link.href = message.attachment.url;
@@ -657,15 +710,18 @@ function renderMessage(message) {
   meta.className = 'message-meta';
   meta.textContent = formatTime(message.timestamp);
   row.append(bubble, meta);
+  if (message.reactionJson) renderReactions(row, message.reactionJson);
   if (isMine && !message.deleted) {
     const tools = document.createElement('div');
     tools.className = 'message-tools';
-    tools.innerHTML = '<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button></div>';
+    tools.innerHTML = '<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="reply"><i class="fa-solid fa-reply"></i> ตอบกลับ</button><button type="button" data-message-action="react"><i class="fa-solid fa-heart"></i> ถูกใจ</button><button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button></div>';
     tools.querySelector('.message-more').addEventListener('click', (event) => {
       event.stopPropagation();
       document.querySelectorAll('.message-tools.open').forEach((item) => { if (item !== tools) item.classList.remove('open'); });
       tools.classList.toggle('open');
     });
+    tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open'); });
+    tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open'); });
     tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
       const text = window.prompt('แก้ไขข้อความ', message.text);
       if (text?.trim() && socket.connected) socket.emit('edit-message', { messageId: message.id, text });
@@ -677,8 +733,53 @@ function renderMessage(message) {
     });
     row.append(tools);
   }
-  chatArea.appendChild(row);
-  chatArea.scrollTop = chatArea.scrollHeight;
+  if (!isMine && !message.deleted) {
+    const actions = document.createElement('button');
+    actions.type = 'button';
+    actions.className = 'message-reaction-button';
+    actions.title = 'React';
+    actions.textContent = '❤️';
+    actions.addEventListener('click', () => socket.emit('react-message', { messageId: message.id, emoji: '❤️' }));
+    row.append(actions);
+  }
+  if (message.prepend) {
+    const firstMessage = chatArea.querySelector('.message-row');
+    if (firstMessage) chatArea.insertBefore(row, firstMessage);
+    else chatArea.appendChild(row);
+  } else {
+    chatArea.appendChild(row);
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+}
+
+function renderReactions(row, reactions) {
+  let parsed = reactions;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed || '{}'); } catch (_error) { parsed = {}; }
+  }
+  row.querySelector('.message-reactions')?.remove();
+  const values = Object.values(parsed || {});
+  if (!values.length) return;
+  const badge = document.createElement('span');
+  badge.className = 'message-reactions';
+  badge.textContent = values.join('');
+  row.append(badge);
+}
+
+async function loadOlderMessages() {
+  if (!selectedContact || !oldestMessageTimestamp) return;
+  const response = await fetch(`/api/conversations/${selectedContact.id}/messages?limit=50&before=${encodeURIComponent(oldestMessageTimestamp)}`);
+  if (!response.ok) return showToast('โหลดข้อความเก่าไม่สำเร็จ');
+  const result = await response.json();
+  const previousHeight = chatArea.scrollHeight;
+  result.messages.forEach((message) => {
+    let attachment = null;
+    try { attachment = message.attachmentJson ? JSON.parse(message.attachmentJson) : null; } catch (_error) {}
+    renderMessage({ ...message, attachment, deleted: Boolean(message.deletedAt), edited: Boolean(message.editedAt), prepend: true });
+  });
+  if (result.messages[0]) oldestMessageTimestamp = result.messages[0].timestamp;
+  document.getElementById('loadOlderMessages').hidden = !result.hasMore;
+  chatArea.scrollTop += chatArea.scrollHeight - previousHeight;
 }
 
 function formatTime(timestamp) {
@@ -693,10 +794,33 @@ function endCall(notifyPeer) {
   if (notifyPeer && socket.connected) socket.emit('end-call');
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
+  if (screenStream) screenStream.getTracks().forEach((track) => track.stop());
   peerConnection = null; localStream = null; activePeerId = null; isCaller = false; pendingIceCandidates = [];
+  screenStream = null;
   pendingIncomingCall = null; acceptCallButton.classList.remove('visible'); rejectCallButton.classList.remove('visible');
   remoteVideo.srcObject = null; localVideo.srcObject = null;
   callModal.classList.remove('visible'); callModal.setAttribute('aria-hidden', 'true');
+}
+
+async function shareScreen() {
+  if (!peerConnection || activeCallMode !== 'video') return showToast('เปิดวิดีโอคอลก่อนแชร์หน้าจอ');
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const screenTrack = screenStream.getVideoTracks()[0];
+    const sender = peerConnection.getSenders().find((item) => item.track?.kind === 'video');
+    if (!sender) return;
+    await sender.replaceTrack(screenTrack);
+    localVideo.srcObject = screenStream;
+    screenTrack.addEventListener('ended', async () => {
+      const cameraTrack = localStream?.getVideoTracks()[0];
+      if (cameraTrack && peerConnection) {
+        await sender.replaceTrack(cameraTrack);
+        localVideo.srcObject = localStream;
+      }
+    }, { once: true });
+  } catch (error) {
+    if (error.name !== 'NotAllowedError') showToast('แชร์หน้าจอไม่สำเร็จ');
+  }
 }
 
 function toggleMicrophone() {

@@ -12,8 +12,13 @@ const { db, initializeDatabase } = require('./db');
 
 const app = express();
 const httpServer = http.createServer(app);
+const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000')
+  .split(',').map((origin) => origin.trim()).filter(Boolean);
 const io = new Server(httpServer, {
-  cors: { origin: true, methods: ['GET', 'POST'] }
+  cors: {
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
+    methods: ['GET', 'POST']
+  }
 });
 
 const port = process.env.PORT || 3000;
@@ -32,7 +37,6 @@ const upload = multer({
 
 app.use(express.json());
 app.use(express.static(publicDirectory));
-app.use('/uploads', express.static(uploadDirectory));
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false });
 
 function getTokenFromCookie(request) {
@@ -63,7 +67,12 @@ function isUserOnline(userId) {
 }
 
 function contactView(user) {
-  return { ...publicUser(user), online: isUserOnline(user.id) };
+  return { id: user.id, username: user.username, online: isUserOnline(user.id) };
+}
+
+function uploadFilenameFromUrl(url) {
+  const match = typeof url === 'string' ? url.match(/^\/uploads\/([A-Za-z0-9._-]+)$/) : null;
+  return match ? match[1] : null;
 }
 
 function authenticatedUserId(request) {
@@ -141,7 +150,8 @@ app.get('/api/auth/me', async (request, response) => {
 });
 
 app.post('/api/auth/logout', (_request, response) => {
-  response.setHeader('Set-Cookie', 'auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  response.setHeader('Set-Cookie', `auth_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
   response.status(204).end();
 });
 
@@ -165,14 +175,14 @@ app.get('/api/contacts', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const friends = await db.execute({
-      sql: `SELECT u.id, u.username, u.email FROM users u
+      sql: `SELECT u.id, u.username FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
         WHERE f.user_id = ? AND f.status = 'accepted'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
         ORDER BY u.username`, args: [userId, userId, userId]
     });
     const suggestions = await db.execute({
-      sql: `SELECT u.id, u.username, u.email FROM users u
+      sql: `SELECT u.id, u.username FROM users u
         WHERE u.id <> ? AND NOT EXISTS (
           SELECT 1 FROM friendships f WHERE (f.user_id = ? AND f.friend_id = u.id)
           OR (f.user_id = u.id AND f.friend_id = ?)
@@ -180,7 +190,7 @@ app.get('/api/contacts', async (request, response) => {
         ORDER BY u.username`, args: [userId, userId, userId, userId, userId]
     });
     const requests = await db.execute({
-      sql: `SELECT u.id, u.username, u.email FROM users u
+      sql: `SELECT u.id, u.username FROM users u
         INNER JOIN friendships f ON f.user_id = u.id
         WHERE f.friend_id = ? AND f.status = 'pending'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
@@ -197,20 +207,23 @@ app.get('/api/conversations', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const result = await db.execute({
-      sql: `SELECT u.id, u.username, u.email FROM users u
+      sql: `SELECT u.id, u.username,
+          (SELECT m.text FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END ORDER BY m.created_at DESC LIMIT 1) AS last_text,
+          (SELECT m.created_at FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END ORDER BY m.created_at DESC LIMIT 1) AS last_created_at,
+          (SELECT COUNT(*) FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.user_id <> ? AND m.read_at IS NULL) AS unread_count
+        FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
         WHERE f.user_id = ? AND f.status = 'accepted'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
         ORDER BY u.username`,
-      args: [userId, userId, userId]
+      args: [userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId]
     });
-    const rows = [];
-    for (const row of result.rows) {
-      const roomId = directRoomId(userId, row.id);
-      const latest = await db.execute({ sql: 'SELECT text AS last_text, created_at AS last_created_at FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 1', args: [roomId] });
-      const unread = await db.execute({ sql: 'SELECT COUNT(*) AS count FROM messages WHERE room_id = ? AND user_id <> ? AND read_at IS NULL', args: [roomId, userId] });
-      rows.push({ ...contactView(row), lastText: latest.rows[0]?.last_text || '', lastCreatedAt: latest.rows[0]?.last_created_at || null, unreadCount: Number(unread.rows[0]?.count || 0) });
-    }
+    const rows = result.rows.map((row) => ({
+      ...contactView(row),
+      lastText: row.last_text || '',
+      lastCreatedAt: row.last_created_at || null,
+      unreadCount: Number(row.unread_count || 0)
+    }));
     rows.sort((first, second) => (second.lastCreatedAt || '').localeCompare(first.lastCreatedAt || ''));
     response.json({ conversations: rows });
   } catch (_error) {
@@ -230,6 +243,55 @@ app.post('/api/conversations/:friendId/read', async (request, response) => {
   }
 });
 
+app.get('/api/messages/search', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const query = typeof request.query.q === 'string' ? request.query.q.trim() : '';
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (query.length < 2 || query.length > 100) return response.status(400).json({ error: 'Search query must be 2-100 characters' });
+  try {
+    const result = await db.execute({
+      sql: `SELECT m.id, m.room_id AS roomId, m.user_id AS senderId, u.username AS senderName,
+        m.text, m.created_at AS timestamp
+        FROM messages m INNER JOIN users u ON u.id = m.user_id
+        INNER JOIN room_members rm ON rm.room_id = m.room_id
+        WHERE rm.user_id = ? AND m.deleted_at IS NULL AND m.text LIKE ?
+        ORDER BY m.created_at DESC LIMIT 50`,
+      args: [userId, `%${query}%`]
+    });
+    response.json({ messages: result.rows });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not search messages' });
+  }
+});
+
+app.get('/api/conversations/:friendId/messages', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const friendId = request.params.friendId;
+  const limit = Math.min(Math.max(Number.parseInt(request.query.limit, 10) || 50, 1), 100);
+  const before = typeof request.query.before === 'string' ? request.query.before : null;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    const membership = await db.execute({
+      sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`,
+      args: [userId, friendId]
+    });
+    if (!membership.rows.length) return response.status(403).json({ error: 'Conversation access denied' });
+    const result = await db.execute({
+      sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text,
+        m.attachment_json AS attachmentJson, m.reply_to AS replyTo, m.reaction_json AS reactionJson,
+        m.delivered_at AS deliveredAt, m.read_at AS readAt, m.edited_at AS editedAt,
+        m.deleted_at AS deletedAt, m.created_at AS timestamp
+        FROM messages m INNER JOIN users u ON u.id = m.user_id
+        WHERE m.room_id = ? ${before ? 'AND m.created_at < ?' : ''}
+        ORDER BY m.created_at DESC LIMIT ?`,
+      args: before ? [directRoomId(userId, friendId), before, limit] : [directRoomId(userId, friendId), limit]
+    });
+    response.json({ messages: result.rows.reverse(), hasMore: result.rows.length === limit });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not load messages' });
+  }
+});
+
 app.post('/api/uploads', (request, response, next) => {
   const userId = authenticatedUserId(request);
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
@@ -237,12 +299,33 @@ app.post('/api/uploads', (request, response, next) => {
   next();
 }, upload.single('file'), async (request, response) => {
   if (!request.file) return response.status(400).json({ error: 'A supported file is required' });
+  await db.execute({
+    sql: 'INSERT INTO uploads (filename, user_id, original_name, mimetype, size) VALUES (?, ?, ?, ?, ?)',
+    args: [request.file.filename, request.userId, request.file.originalname, request.file.mimetype, request.file.size]
+  });
   response.status(201).json({
     url: `/uploads/${request.file.filename}`,
     name: request.file.originalname,
     type: request.file.mimetype,
     size: request.file.size
   });
+});
+
+app.get('/uploads/:filename', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).end();
+  const filename = request.params.filename;
+  if (!/^[A-Za-z0-9._-]+$/.test(filename)) return response.status(404).end();
+  const result = await db.execute({
+    sql: `SELECT 1 FROM uploads u
+      WHERE u.filename = ? AND (u.user_id = ? OR EXISTS (
+        SELECT 1 FROM messages m INNER JOIN room_members rm ON rm.room_id = m.room_id
+        WHERE rm.user_id = ? AND m.attachment_json LIKE '%' || ? || '%'
+      ))`,
+    args: [filename, userId, userId, filename]
+  });
+  if (!result.rows.length) return response.status(404).end();
+  response.sendFile(path.join(uploadDirectory, filename));
 });
 
 app.post('/api/contacts/:friendId', async (request, response) => {
@@ -355,6 +438,11 @@ app.get('*', (_request, response) => {
   response.sendFile(path.join(publicDirectory, 'index.html'));
 });
 
+app.use((error, _request, response, next) => {
+  if (error instanceof multer.MulterError || error.message === 'Unexpected field') return response.status(400).json({ error: 'A supported file is required' });
+  next(error);
+});
+
 // Socket.io uses a persistent TCP connection (normally upgraded to WebSocket)
 // to transport chat messages and signaling packets with low latency.
 io.use((socket, next) => {
@@ -387,7 +475,10 @@ io.on('connection', (socket) => {
       const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
       safeUsername = result.rows[0]?.username || safeUsername;
       await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Direct conversation'] });
-      await db.execute({ sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] });
+      await db.batch([
+        { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] },
+        { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, peerId] }
+      ], 'write');
     }
 
     if (socket.data.roomId) socket.leave(socket.data.roomId);
@@ -403,16 +494,19 @@ io.on('connection', (socket) => {
     });
     if (db) {
       const history = await db.execute({
-        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson, m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
+        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson,
+          m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
+          m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
           FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? ORDER BY m.created_at ASC LIMIT 200`,
         args: [safeRoomId]
       });
+      await db.execute({ sql: "UPDATE messages SET delivered_at = COALESCE(delivered_at, datetime('now')) WHERE room_id = ? AND user_id <> ?", args: [safeRoomId, socket.data.userId] });
       socket.emit('chat-history', { messages: history.rows, selectionToken });
     }
     socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
   });
 
-  socket.on('chat-message', ({ roomId, text, attachment }) => {
+  socket.on('chat-message', async ({ text, attachment, replyTo }) => {
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return;
 
     const message = {
@@ -423,9 +517,33 @@ io.on('connection', (socket) => {
       timestamp: new Date().toISOString()
     };
     if (!socket.data.roomId) return;
-    if (attachment && typeof attachment.url === 'string' && typeof attachment.name === 'string') message.attachment = attachment;
-    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json) VALUES (?, ?, ?, ?, ?)', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null] }).catch(() => {});
+    if (attachment) {
+      const filename = uploadFilenameFromUrl(attachment.url);
+      const uploadResult = filename && db ? await db.execute({ sql: 'SELECT original_name AS name, mimetype AS type, size FROM uploads WHERE filename = ? AND user_id = ?', args: [filename, socket.data.userId] }) : null;
+      if (!uploadResult?.rows.length) return socket.emit('chat-error', { message: 'Attachment is invalid or expired' });
+      message.attachment = { url: `/uploads/${filename}`, ...uploadResult.rows[0] };
+    }
+    let safeReplyTo = null;
+    if (typeof replyTo === 'string' && db) {
+      const replyResult = await db.execute({ sql: 'SELECT id FROM messages WHERE id = ? AND room_id = ?', args: [replyTo, roomForSocket()] });
+      if (replyResult.rows.length) safeReplyTo = replyTo;
+    }
+    if (safeReplyTo) message.replyTo = safeReplyTo;
+    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] }).catch(() => {});
     io.to(roomForSocket()).emit('chat-message', message);
+  });
+
+  socket.on('react-message', async ({ messageId, emoji }) => {
+    const allowedEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+    if (!db || !socket.data.roomId || typeof messageId !== 'string' || !allowedEmojis.includes(emoji)) return;
+    const messageResult = await db.execute({ sql: 'SELECT reaction_json AS reactions FROM messages WHERE id = ? AND room_id = ?', args: [messageId, roomForSocket()] });
+    if (!messageResult.rows.length) return;
+    let reactions = {};
+    try { reactions = JSON.parse(messageResult.rows[0].reactions || '{}'); } catch (_error) {}
+    if (reactions[socket.data.userId] === emoji) delete reactions[socket.data.userId];
+    else reactions[socket.data.userId] = emoji;
+    await db.execute({ sql: 'UPDATE messages SET reaction_json = ? WHERE id = ? AND room_id = ?', args: [JSON.stringify(reactions), messageId, roomForSocket()] });
+    io.to(roomForSocket()).emit('message-reaction', { messageId, reactions });
   });
 
   socket.on('typing', ({ active }) => {
@@ -450,18 +568,32 @@ io.on('connection', (socket) => {
   socket.on('call-user', ({ mode }) => {
     if (!socket.data.roomId) return;
     const target = [...(io.sockets.adapter.rooms.get(roomForSocket()) || [])].find((socketId) => socketId !== socket.id);
+    const targetSocket = target ? io.sockets.sockets.get(target) : null;
+    if (!targetSocket || targetSocket.data.callId) return socket.emit('call-busy');
     socket.data.callId = crypto.randomUUID();
-    if (db && target) db.execute({ sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)', args: [socket.data.callId, roomForSocket(), socket.data.userId, io.sockets.sockets.get(target)?.data.userId, mode === 'audio' ? 'audio' : 'video', 'ringing'] }).catch(() => {});
+    if (db) db.execute({ sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)', args: [socket.data.callId, roomForSocket(), socket.data.userId, targetSocket.data.userId, mode === 'audio' ? 'audio' : 'video', 'ringing'] }).catch(() => {});
     socket.to(roomForSocket()).emit('incoming-call', {
       callerId: socket.id,
+      callId: socket.data.callId,
       callerName: socket.data.username || 'Guest',
       mode: mode === 'audio' ? 'audio' : 'video'
     });
   });
 
+  for (const [eventName, status] of [['call-accepted', 'answered'], ['call-rejected', 'rejected']]) {
+    socket.on(eventName, ({ targetId, callId }) => {
+      if (typeof targetId !== 'string' || typeof callId !== 'string' || !socket.data.roomId) return;
+      const targetSocket = io.sockets.sockets.get(targetId);
+      if (!targetSocket || targetSocket.data.roomId !== socket.data.roomId) return;
+      targetSocket.data.callId = callId;
+      if (db) db.execute({ sql: 'UPDATE calls SET status = ? WHERE id = ? AND callee_id = ? AND status = \'ringing\'', args: [status, callId, socket.data.userId] }).catch(() => {});
+      targetSocket.emit(eventName, { senderId: socket.id });
+    });
+  }
+
   // These signaling packets carry SDP and ICE metadata only. WebRTC media does
   // not pass through this Node process after the peer connection is established.
-  for (const eventName of ['call-accepted', 'call-rejected', 'webrtc-offer', 'webrtc-answer', 'ice-candidate']) {
+  for (const eventName of ['webrtc-offer', 'webrtc-answer', 'ice-candidate']) {
     socket.on(eventName, ({ targetId, ...payload }) => {
       if (typeof targetId !== 'string' || !socket.data.roomId) return;
       const targetSocket = io.sockets.sockets.get(targetId);
@@ -490,7 +622,11 @@ async function startServer() {
   });
 }
 
-startServer().catch((error) => {
-  console.error('Failed to initialize the database:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error('Failed to initialize the database:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, httpServer, io, startServer };
