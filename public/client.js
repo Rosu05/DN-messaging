@@ -209,9 +209,7 @@ document.querySelector('.search-box input').addEventListener('input', async (eve
     renderSearchResults((await response.json()).messages);
     return;
   }
-  document.querySelectorAll('#conversationList .conversation').forEach((conversation) => {
-    conversation.hidden = query && !conversation.textContent.toLowerCase().includes(query);
-  });
+  loadConversations();
 });
 
 function closeSettings() {

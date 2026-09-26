@@ -149,7 +149,7 @@ app.post('/api/auth/login', authLimiter, async (request, response) => {
     const result = await db.execute({ sql: 'SELECT id, username, email, password_hash FROM users WHERE username = ?', args: [normalizedUsername] });
     const user = result.rows[0];
     const validPassword = user && typeof password === 'string' ? await bcrypt.compare(password, user.password_hash) : false;
-    if (!validPassword) return response.status(401).json({ error: 'Email or password is incorrect' });
+    if (!validPassword) return response.status(401).json({ error: 'Username or password is incorrect' });
     const safeUser = { id: user.id, username: user.username, email: user.email };
     setAuthCookie(response, safeUser);
     response.json({ user: publicUser(safeUser) });
@@ -357,16 +357,20 @@ app.get('/uploads/:filename', async (request, response) => {
   if (!userId || !db) return response.status(401).end();
   const filename = request.params.filename;
   if (!/^[A-Za-z0-9._-]+$/.test(filename)) return response.status(404).end();
-  const result = await db.execute({
-    sql: `SELECT 1 FROM uploads u
-      WHERE u.filename = ? AND (u.user_id = ? OR EXISTS (
-        SELECT 1 FROM messages m INNER JOIN room_members rm ON rm.room_id = m.room_id
-        WHERE rm.user_id = ? AND m.attachment_json LIKE '%' || ? || '%'
-      ))`,
-    args: [filename, userId, userId, filename]
-  });
-  if (!result.rows.length) return response.status(404).end();
-  response.sendFile(path.join(uploadDirectory, filename));
+  try {
+    const result = await db.execute({
+      sql: `SELECT 1 FROM uploads u
+        WHERE u.filename = ? AND (u.user_id = ? OR EXISTS (
+          SELECT 1 FROM messages m INNER JOIN room_members rm ON rm.room_id = m.room_id
+          WHERE rm.user_id = ? AND json_extract(m.attachment_json, '$.url') = '/uploads/' || ?
+        ))`,
+      args: [filename, userId, userId, filename]
+    });
+    if (!result.rows.length) return response.status(404).end();
+    response.sendFile(path.join(uploadDirectory, filename));
+  } catch (_error) {
+    response.status(500).end();
+  }
 });
 
 app.post('/api/contacts/:friendId', async (request, response) => {
@@ -387,6 +391,8 @@ app.post('/api/contacts/:friendId/accept', async (request, response) => {
   const friendId = request.params.friendId;
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
+    const pending = await db.execute({ sql: "SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'pending'", args: [friendId, userId] });
+    if (!pending.rows.length) return response.status(404).json({ error: 'Friend request not found' });
     await db.batch([
       { sql: "UPDATE friendships SET status = 'accepted' WHERE user_id = ? AND friend_id = ? AND status = 'pending'", args: [friendId, userId] },
       { sql: "INSERT OR REPLACE INTO friendships (user_id, friend_id, status) VALUES (?, ?, 'accepted')", args: [userId, friendId] }
@@ -484,6 +490,9 @@ app.get('/api/call-history', async (request, response) => {
   });
   response.json({ calls: result.rows });
 });
+app.use('/api', (_request, response) => {
+  response.status(404).json({ error: 'Not found' });
+});
 app.get('*', (_request, response) => {
   response.sendFile(path.join(publicDirectory, 'index.html'));
 });
@@ -514,47 +523,51 @@ io.on('connection', (socket) => {
 
   socket.on('join-room', async ({ peerId, selectionToken }) => {
     if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
-    const membership = await db?.execute({
-      sql: `SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = ? AND f.status = 'accepted'
-        AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = ?) OR (b.user_id = ? AND b.blocked_user_id = ?))`,
-      args: [socket.data.userId, peerId, socket.data.userId, peerId, peerId, socket.data.userId]
-    });
-    if (db && !membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
-    const safeRoomId = directRoomId(socket.data.userId, peerId);
-    let safeUsername = 'User';
-    if (db) {
-      const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
-      safeUsername = result.rows[0]?.username || safeUsername;
-      await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Direct conversation'] });
-      await db.batch([
-        { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] },
-        { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, peerId] }
-      ], 'write');
-    }
-
-    if (socket.data.roomId) socket.leave(socket.data.roomId);
-    socket.join(safeRoomId);
-    socket.data.roomId = safeRoomId;
-    socket.data.username = safeUsername;
-
-    const members = io.sockets.adapter.rooms.get(safeRoomId);
-    socket.emit('room-joined', {
-      roomId: safeRoomId,
-      participantCount: members ? members.size : 1,
-      selectionToken
-    });
-    if (db) {
-      const history = await db.execute({
-        sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson,
-          m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
-          m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
-          FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
-        args: [safeRoomId]
+    try {
+      const membership = await db?.execute({
+        sql: `SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = ? AND f.status = 'accepted'
+          AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = ?) OR (b.user_id = ? AND b.blocked_user_id = ?))`,
+        args: [socket.data.userId, peerId, socket.data.userId, peerId, peerId, socket.data.userId]
       });
-      await db.execute({ sql: "UPDATE messages SET delivered_at = COALESCE(delivered_at, datetime('now')) WHERE room_id = ? AND user_id <> ?", args: [safeRoomId, socket.data.userId] });
-      socket.emit('chat-history', { messages: history.rows, selectionToken });
+      if (db && !membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
+      const safeRoomId = directRoomId(socket.data.userId, peerId);
+      let safeUsername = 'User';
+      if (db) {
+        const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
+        safeUsername = result.rows[0]?.username || safeUsername;
+        await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, 'Direct conversation'] });
+        await db.batch([
+          { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, socket.data.userId] },
+          { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [safeRoomId, peerId] }
+        ], 'write');
+      }
+
+      if (socket.data.roomId) socket.leave(socket.data.roomId);
+      socket.join(safeRoomId);
+      socket.data.roomId = safeRoomId;
+      socket.data.username = safeUsername;
+
+      const members = io.sockets.adapter.rooms.get(safeRoomId);
+      socket.emit('room-joined', {
+        roomId: safeRoomId,
+        participantCount: members ? members.size : 1,
+        selectionToken
+      });
+      if (db) {
+        const history = await db.execute({
+          sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson,
+            m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
+            m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
+            FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
+          args: [safeRoomId]
+        });
+        await db.execute({ sql: "UPDATE messages SET delivered_at = COALESCE(delivered_at, datetime('now')) WHERE room_id = ? AND user_id <> ?", args: [safeRoomId, socket.data.userId] });
+        socket.emit('chat-history', { messages: history.rows, selectionToken });
+      }
+      socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
+    } catch (_error) {
+      socket.emit('chat-error', { message: 'Could not join conversation' });
     }
-    socket.to(safeRoomId).emit('peer-joined', { username: safeUsername });
   });
 
   socket.on('chat-message', async ({ text, attachment, replyTo }) => {
@@ -565,40 +578,46 @@ io.on('connection', (socket) => {
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return;
 
     const message = {
-      id: `${socket.id}-${Date.now()}`,
+      id: crypto.randomUUID(),
       senderId: socket.data.userId,
       senderName: socket.data.username || 'Guest',
       text: text.trim(),
       timestamp: new Date().toISOString()
     };
     if (!socket.data.roomId) return;
-    if (attachment) {
-      const filename = uploadFilenameFromUrl(attachment.url);
-      const uploadResult = filename && db ? await db.execute({ sql: 'SELECT original_name AS name, mimetype AS type, size FROM uploads WHERE filename = ? AND user_id = ?', args: [filename, socket.data.userId] }) : null;
-      if (!uploadResult?.rows.length) return socket.emit('chat-error', { message: 'Attachment is invalid or expired' });
-      message.attachment = { url: `/uploads/${filename}`, ...uploadResult.rows[0] };
+    try {
+      if (attachment) {
+        const filename = uploadFilenameFromUrl(attachment.url);
+        const uploadResult = filename && db ? await db.execute({ sql: 'SELECT original_name AS name, mimetype AS type, size FROM uploads WHERE filename = ? AND user_id = ?', args: [filename, socket.data.userId] }) : null;
+        if (!uploadResult?.rows.length) return socket.emit('chat-error', { message: 'Attachment is invalid or expired' });
+        message.attachment = { url: `/uploads/${filename}`, ...uploadResult.rows[0] };
+      }
+      let safeReplyTo = null;
+      if (typeof replyTo === 'string' && db) {
+        const replyResult = await db.execute({ sql: 'SELECT id FROM messages WHERE id = ? AND room_id = ?', args: [replyTo, roomForSocket()] });
+        if (replyResult.rows.length) safeReplyTo = replyTo;
+      }
+      if (safeReplyTo) message.replyTo = safeReplyTo;
+      if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] }).catch(() => {});
+    } catch (_error) {
+      return socket.emit('chat-error', { message: 'Could not send message' });
     }
-    let safeReplyTo = null;
-    if (typeof replyTo === 'string' && db) {
-      const replyResult = await db.execute({ sql: 'SELECT id FROM messages WHERE id = ? AND room_id = ?', args: [replyTo, roomForSocket()] });
-      if (replyResult.rows.length) safeReplyTo = replyTo;
-    }
-    if (safeReplyTo) message.replyTo = safeReplyTo;
-    if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] }).catch(() => {});
     io.to(roomForSocket()).emit('chat-message', message);
   });
 
   socket.on('react-message', async ({ messageId, emoji }) => {
     const allowedEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
     if (!db || !socket.data.roomId || typeof messageId !== 'string' || !allowedEmojis.includes(emoji)) return;
-    const messageResult = await db.execute({ sql: 'SELECT reaction_json AS reactions FROM messages WHERE id = ? AND room_id = ?', args: [messageId, roomForSocket()] });
-    if (!messageResult.rows.length) return;
-    let reactions = {};
-    try { reactions = JSON.parse(messageResult.rows[0].reactions || '{}'); } catch (_error) {}
-    if (reactions[socket.data.userId] === emoji) delete reactions[socket.data.userId];
-    else reactions[socket.data.userId] = emoji;
-    await db.execute({ sql: 'UPDATE messages SET reaction_json = ? WHERE id = ? AND room_id = ?', args: [JSON.stringify(reactions), messageId, roomForSocket()] });
-    io.to(roomForSocket()).emit('message-reaction', { messageId, reactions });
+    try {
+      const messageResult = await db.execute({ sql: 'SELECT reaction_json AS reactions FROM messages WHERE id = ? AND room_id = ?', args: [messageId, roomForSocket()] });
+      if (!messageResult.rows.length) return;
+      let reactions = {};
+      try { reactions = JSON.parse(messageResult.rows[0].reactions || '{}'); } catch (_error) {}
+      if (reactions[socket.data.userId] === emoji) delete reactions[socket.data.userId];
+      else reactions[socket.data.userId] = emoji;
+      await db.execute({ sql: 'UPDATE messages SET reaction_json = ? WHERE id = ? AND room_id = ?', args: [JSON.stringify(reactions), messageId, roomForSocket()] });
+      io.to(roomForSocket()).emit('message-reaction', { messageId, reactions });
+    } catch (_error) {}
   });
 
   socket.on('typing', ({ active }) => {
@@ -608,16 +627,20 @@ io.on('connection', (socket) => {
 
   socket.on('edit-message', async ({ messageId, text }) => {
     if (typeof messageId !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 2000 || !socket.data.roomId || !db) return;
-    const updatedAt = new Date().toISOString();
-    const result = await db.execute({ sql: 'UPDATE messages SET text = ?, edited_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: [text.trim(), updatedAt, messageId, socket.data.userId, roomForSocket()] });
-    if (result.rowsAffected) io.to(roomForSocket()).emit('message-edited', { messageId, text: text.trim(), editedAt: updatedAt });
+    try {
+      const updatedAt = new Date().toISOString();
+      const result = await db.execute({ sql: 'UPDATE messages SET text = ?, edited_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: [text.trim(), updatedAt, messageId, socket.data.userId, roomForSocket()] });
+      if (result.rowsAffected) io.to(roomForSocket()).emit('message-edited', { messageId, text: text.trim(), editedAt: updatedAt });
+    } catch (_error) {}
   });
 
   socket.on('delete-message', async ({ messageId }) => {
     if (typeof messageId !== 'string' || !socket.data.roomId || !db) return;
-    const deletedAt = new Date().toISOString();
-    const result = await db.execute({ sql: 'UPDATE messages SET text = ?, attachment_json = NULL, deleted_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: ['ข้อความถูกลบแล้ว', deletedAt, messageId, socket.data.userId, roomForSocket()] });
-    if (result.rowsAffected) io.to(roomForSocket()).emit('message-deleted', { messageId, deletedAt });
+    try {
+      const deletedAt = new Date().toISOString();
+      const result = await db.execute({ sql: 'UPDATE messages SET text = ?, attachment_json = NULL, deleted_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: ['ข้อความถูกลบแล้ว', deletedAt, messageId, socket.data.userId, roomForSocket()] });
+      if (result.rowsAffected) io.to(roomForSocket()).emit('message-deleted', { messageId, deletedAt });
+    } catch (_error) {}
   });
 
   socket.on('call-user', ({ mode }) => {
