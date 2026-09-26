@@ -75,7 +75,7 @@ document.querySelectorAll('[data-mobile-nav]').forEach((button) => button.addEve
   }
 }));
 document.addEventListener('click', (event) => {
-  if (!event.target.closest('.message-tools')) document.querySelectorAll('.message-tools.open').forEach((item) => item.classList.remove('open'));
+  if (!event.target.closest('.message-tools')) document.querySelectorAll('.message-tools.open, .message-tools.visible').forEach((item) => item.classList.remove('open', 'visible'));
 });
 cancelDeleteButton.addEventListener('click', closeDeleteConfirm);
 deleteConfirmModal.addEventListener('click', (event) => { if (event.target === deleteConfirmModal) closeDeleteConfirm(); });
@@ -712,6 +712,47 @@ async function setRemoteDescription(description) {
   await Promise.all(candidates.map((candidate) => peerConnection.addIceCandidate(candidate)));
 }
 
+function attachLongPress(target, onLongPress) {
+  let timer = null;
+  let suppressTimer = null;
+  let triggered = false;
+  let suppressContext = false;
+  let startX = 0;
+  let startY = 0;
+  const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  target.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) return;
+    triggered = false;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    clearTimer();
+    timer = setTimeout(() => {
+      triggered = true;
+      suppressContext = true;
+      clearTimeout(suppressTimer);
+      suppressTimer = setTimeout(() => { suppressContext = false; }, 1200);
+      if (navigator.vibrate) navigator.vibrate(10);
+      onLongPress();
+    }, 450);
+  }, { passive: true });
+  target.addEventListener('touchmove', (event) => {
+    if (!timer) return;
+    const touch = event.touches[0];
+    if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) clearTimer();
+  }, { passive: true });
+  target.addEventListener('touchend', (event) => {
+    clearTimer();
+    if (triggered) {
+      triggered = false;
+      event.preventDefault();
+    }
+  }, { passive: false });
+  target.addEventListener('touchcancel', clearTimer);
+  target.addEventListener('contextmenu', (event) => {
+    if (suppressContext) event.preventDefault();
+  });
+}
+
 function renderMessage(message) {
   const isMine = message.senderId === currentUser?.id;
   if (!selectedContact) return;
@@ -755,20 +796,21 @@ function renderMessage(message) {
     tools.innerHTML = '<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="reply"><i class="fa-solid fa-reply"></i> ตอบกลับ</button><button type="button" data-message-action="react"><i class="fa-solid fa-heart"></i> ถูกใจ</button><button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button></div>';
     tools.querySelector('.message-more').addEventListener('click', (event) => {
       event.stopPropagation();
-      document.querySelectorAll('.message-tools.open').forEach((item) => { if (item !== tools) item.classList.remove('open'); });
+      document.querySelectorAll('.message-tools.open, .message-tools.visible').forEach((item) => { if (item !== tools) item.classList.remove('open', 'visible'); });
       tools.classList.toggle('open');
     });
-    tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open'); });
-    tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open'); });
+    tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open', 'visible'); });
+    tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open', 'visible'); });
     tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
       const text = window.prompt('แก้ไขข้อความ', message.text);
       if (text?.trim() && socket.connected) socket.emit('edit-message', { messageId: message.id, text });
-      tools.classList.remove('open');
+      tools.classList.remove('open', 'visible');
     });
     tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
       openDeleteConfirm(message.id);
-      tools.classList.remove('open');
+      tools.classList.remove('open', 'visible');
     });
+    attachLongPress(bubble, () => tools.classList.add('visible'));
     row.append(tools);
   }
   if (!isMine && !message.deleted) {
