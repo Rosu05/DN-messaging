@@ -23,6 +23,7 @@
 
 ```text
 server.js                 Express + Socket.io signaling server
+db.js                     Turso schema initialization
 public/index.html         Chat and call interface
 public/style.css          Responsive Instagram DM-inspired UI
 public/client.js          Socket.io, WebRTC, media controls
@@ -55,9 +56,9 @@ npm test
 Invoke-WebRequest http://localhost:3000/health
 ```
 
-## Environment Variables สำหรับ Turso
+## Environment Variables
 
-ตั้งค่าตัวแปรต่อไปนี้ใน Render Web Service เพื่อเปิดใช้งานการสร้าง schema ฐานข้อมูลอัตโนมัติ:
+ตั้งค่าตัวแปรต่อไปนี้ใน platform ที่ deploy (เช่น Render, Railway หรือ Cloud VM) เพื่อเปิดใช้งานการสร้าง schema ฐานข้อมูลอัตโนมัติ:
 
 ```text
 TURSO_DATABASE_URL=libsql://...
@@ -70,7 +71,7 @@ TURN_USERNAME=ชื่อผู้ใช้ TURN
 TURN_CREDENTIAL=รหัสผ่าน TURN
 ```
 
-เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members` และ `messages` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
+เมื่อเซิร์ฟเวอร์เริ่มทำงาน จะสร้างตาราง `users`, `rooms`, `room_members`, `messages`, `friendships`, `blocked_users`, `calls` และ `uploads` หากยังไม่มีตารางเหล่านี้ โดยไม่ลบข้อมูลเดิม
 
 ไฟล์ที่อัปโหลดจะถูกเก็บในโฟลเดอร์ `uploads/` ของ container และ route ไฟล์ต้องผ่าน authentication ดังนั้น production ที่ต้องการเก็บไฟล์ถาวรควรใช้ object storage หรือ mounted volume โดยต้องคง metadata ของ owner ไว้ด้วย
 
@@ -91,7 +92,7 @@ docker compose ps
 
 ## ขั้นตอนสาธิตระบบ
 
-1. เปิดระบบด้วย browser สองหน้าต่างและตรวจสอบว่า status เป็น Active now
+1. เปิดระบบด้วย browser สองหน้าต่างและตรวจสอบว่า status เป็น ออนไลน์อยู่
 2. ส่งข้อความจากทั้งสองฝั่งเพื่อแสดง sender/receiver และ timestamp
 3. กด Video Call ฝั่งหนึ่ง แล้วกด Accept อีกฝั่งเพื่อสาธิต `call-user`, `call-accepted`, SDP และ ICE
 4. แสดง remote video, local picture-in-picture, mute, camera toggle และ end call
@@ -117,7 +118,7 @@ docker compose ps
 
 ### บทที่ 5 สรุปและข้อเสนอแนะ
 
-ระบบตอบโจทย์การทดลอง Instant Messaging Protocol และ Cloud Deployment ในขอบเขตที่กำหนด การพัฒนาต่อสามารถเพิ่ม authentication, message database, TURN server สำหรับ network ที่มี firewall และ horizontal scaling ด้วย Redis adapter
+ระบบตอบโจทย์การทดลอง Instant Messaging Protocol และ Cloud Deployment ในขอบเขตที่กำหนด การพัฒนาต่อสามารถเพิ่ม TURN server สำหรับ network ที่มี firewall, object storage สำหรับกเก็บไฟล์ที่อัปโหลด และ horizontal scaling ด้วย Redis adapter
 
 ## คำถามที่ควรเตรียมตอบ
 
