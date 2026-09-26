@@ -713,7 +713,16 @@ function renderMessage(message) {
     link.href = message.attachment.url;
     link.target = '_blank';
     link.rel = 'noopener';
-    link.textContent = `เปิดไฟล์: ${message.attachment.name}`;
+    if (message.attachment.type?.startsWith('image/')) {
+      const image = document.createElement('img');
+      image.className = 'message-attachment-image';
+      image.src = message.attachment.url;
+      image.alt = message.attachment.name || 'รูปภาพที่แนบ';
+      image.loading = 'lazy';
+      link.append(image);
+    } else {
+      link.textContent = `เปิดไฟล์: ${message.attachment.name}`;
+    }
     bubble.append(document.createElement('br'), link);
   }
   const meta = document.createElement('time');

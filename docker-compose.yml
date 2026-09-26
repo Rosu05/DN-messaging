@@ -6,7 +6,7 @@ services:
     environment:
       PORT: ${PORT:-3000}
       NODE_ENV: ${NODE_ENV:-production}
-      CLIENT_ORIGINS: ${CLIENT_ORIGINS:-http://localhost:3000}
+      CLIENT_ORIGINS: ${CLIENT_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       TURSO_DATABASE_URL: ${TURSO_DATABASE_URL}
       TURSO_AUTH_TOKEN: ${TURSO_AUTH_TOKEN}
