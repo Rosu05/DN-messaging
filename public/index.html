@@ -177,6 +177,18 @@
       </div>
     </section>
   </div>
+  <div class="edit-modal" id="editModal" aria-hidden="true">
+    <section class="edit-sheet" role="dialog" aria-modal="true" aria-labelledby="editModalTitle">
+      <header class="edit-header"><h2 id="editModalTitle">แก้ไขโปรไฟล์</h2><button type="button" class="settings-close" id="editModalClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <form class="edit-form" id="editForm">
+        <label id="editUsernameField">ชื่อผู้ใช้<input id="editUsernameInput" autocomplete="username" required maxlength="30"></label>
+        <label id="editEmailField">อีเมล<input id="editEmailInput" type="email" autocomplete="email" required maxlength="120"></label>
+        <label id="editMessageField" hidden>ข้อความ<input id="editMessageInput" maxlength="2000"></label>
+        <p class="edit-error" id="editModalError" role="alert"></p>
+        <div class="edit-actions"><button type="button" class="edit-cancel" id="editModalCancel">ยกเลิก</button><button type="submit" class="edit-submit">บันทึก</button></div>
+      </form>
+    </section>
+  </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js?v=20260922"></script>

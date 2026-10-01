@@ -36,6 +36,16 @@ const profileButton = document.getElementById('profileButton');
 const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
 const contactsModal = document.getElementById('contactsModal');
+const editModal = document.getElementById('editModal');
+const editForm = document.getElementById('editForm');
+const editModalTitle = document.getElementById('editModalTitle');
+const editModalError = document.getElementById('editModalError');
+const editUsernameField = document.getElementById('editUsernameField');
+const editEmailField = document.getElementById('editEmailField');
+const editMessageField = document.getElementById('editMessageField');
+const editUsernameInput = document.getElementById('editUsernameInput');
+const editEmailInput = document.getElementById('editEmailInput');
+const editMessageInput = document.getElementById('editMessageInput');
 const homeButton = document.getElementById('homeButton');
 const acceptCallButton = document.getElementById('acceptCallButton');
 const rejectCallButton = document.getElementById('rejectCallButton');
@@ -105,6 +115,8 @@ let searchRequestId = 0;
 let pendingDeleteMessageId = null;
 let emojiPickerOpen = false;
 let pendingConfirmationAction = null;
+let editModalMode = null;
+let editMessageId = null;
 const presenceMap = new Map();
 
 function showConfirmModal({ title, description, confirmText, onConfirm, cancelText = 'ยกเลิก' }) {
@@ -139,6 +151,57 @@ confirmDeleteButton.addEventListener('click', () => {
   closeConfirmModal();
 });
 cancelDeleteButton.addEventListener('click', closeConfirmModal);
+
+function openEditModal(mode, values = {}) {
+  editModalMode = mode;
+  editMessageId = values.messageId || null;
+  const isProfile = mode === 'profile';
+  editModalTitle.textContent = isProfile ? 'แก้ไขโปรไฟล์' : 'แก้ไขข้อความ';
+  editUsernameField.hidden = !isProfile;
+  editEmailField.hidden = !isProfile;
+  editMessageField.hidden = isProfile;
+  editUsernameInput.value = values.username || '';
+  editEmailInput.value = values.email || '';
+  editMessageInput.value = values.text || '';
+  editModalError.textContent = '';
+  editModal.classList.add('visible');
+  editModal.setAttribute('aria-hidden', 'false');
+  (isProfile ? editUsernameInput : editMessageInput).focus();
+}
+
+function closeEditModal() {
+  editModalMode = null;
+  editMessageId = null;
+  editModal.classList.remove('visible');
+  editModal.setAttribute('aria-hidden', 'true');
+}
+
+document.getElementById('editModalClose').addEventListener('click', closeEditModal);
+document.getElementById('editModalCancel').addEventListener('click', closeEditModal);
+editModal.addEventListener('click', (event) => { if (event.target === editModal) closeEditModal(); });
+editForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  editModalError.textContent = '';
+  if (editModalMode === 'message') {
+    const text = editMessageInput.value.trim();
+    if (!text || !editMessageId || !socket.connected) return;
+    socket.emit('edit-message', { messageId: editMessageId, text });
+    closeEditModal();
+    return;
+  }
+  const username = editUsernameInput.value.trim();
+  const email = editEmailInput.value.trim();
+  if (!username || !email) return;
+  const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, email }) });
+  const result = await response.json();
+  if (!response.ok) {
+    editModalError.textContent = result.error || 'แก้ไขโปรไฟล์ไม่สำเร็จ';
+    return;
+  }
+  closeEditModal();
+  enterApp(result.user);
+  showToast('อัปเดตโปรไฟล์แล้ว');
+});
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -202,16 +265,10 @@ soundToggle?.addEventListener('change', savePreferences);
 doNotDisturbToggle?.addEventListener('change', savePreferences);
 
 document.getElementById('menuLogoutButton').addEventListener('click', logout);
-document.getElementById('editProfileButton').addEventListener('click', async () => {
-  const username = window.prompt('Username', currentUser?.username || '');
-  if (!username) return;
-  const email = window.prompt('Email', currentUser?.email || '');
-  if (!email) return;
-  const response = await fetch('/api/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, email }) });
-  const result = await response.json();
-  if (!response.ok) return showToast(result.error || 'แก้ไขโปรไฟล์ไม่สำเร็จ');
-  enterApp(result.user);
-  showToast('อัปเดตโปรไฟล์แล้ว');
+document.getElementById('editProfileButton').addEventListener('click', () => {
+  profileMenu.classList.remove('visible');
+  profileMenu.setAttribute('aria-hidden', 'true');
+  openEditModal('profile', { username: currentUser?.username, email: currentUser?.email });
 });
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
@@ -954,8 +1011,7 @@ function renderMessage(message) {
     tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open'); });
     tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open'); });
     tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
-      const text = window.prompt('แก้ไขข้อความ', message.text);
-      if (text?.trim() && socket.connected) socket.emit('edit-message', { messageId: message.id, text });
+      openEditModal('message', { messageId: message.id, text: message.text });
       tools.classList.remove('open');
     });
     tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
