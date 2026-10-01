@@ -51,6 +51,10 @@ const editModalTitle = document.getElementById('editModalTitle');
 const editModalError = document.getElementById('editModalError');
 const editAvatarField = document.getElementById('editAvatarField');
 const editAvatarInput = document.getElementById('editAvatarInput');
+const avatarCropModal = document.getElementById('avatarCropModal');
+const avatarCropViewport = document.getElementById('avatarCropViewport');
+const avatarCropImage = document.getElementById('avatarCropImage');
+const avatarZoomInput = document.getElementById('avatarZoomInput');
 const editUsernameField = document.getElementById('editUsernameField');
 const editEmailField = document.getElementById('editEmailField');
 const editMessageField = document.getElementById('editMessageField');
@@ -130,6 +134,10 @@ let editModalMode = null;
 let editMessageId = null;
 let groupModalMode = 'create';
 let activeGroupId = null;
+let pendingAvatarBlob = null;
+let avatarCropBaseScale = 1;
+let avatarCropPosition = { x: 0, y: 0 };
+let avatarCropDrag = null;
 const presenceMap = new Map();
 
 function showConfirmModal({ title, description, confirmText, onConfirm, cancelText = 'ยกเลิก' }) {
@@ -190,6 +198,7 @@ function openEditModal(mode, values = {}) {
 function closeEditModal() {
   editModalMode = null;
   editMessageId = null;
+  pendingAvatarBlob = null;
   editModal.classList.remove('visible');
   editModal.setAttribute('aria-hidden', 'true');
 }
@@ -197,6 +206,33 @@ function closeEditModal() {
 document.getElementById('editModalClose').addEventListener('click', closeEditModal);
 document.getElementById('editModalCancel').addEventListener('click', closeEditModal);
 editModal.addEventListener('click', (event) => { if (event.target === editModal) closeEditModal(); });
+editAvatarInput.addEventListener('change', () => {
+  const file = editAvatarInput.files[0];
+  if (file) openAvatarCrop(file);
+});
+document.getElementById('avatarCropClose').addEventListener('click', closeAvatarCrop);
+document.getElementById('avatarCropCancel').addEventListener('click', closeAvatarCrop);
+avatarCropModal.addEventListener('click', (event) => { if (event.target === avatarCropModal) closeAvatarCrop(); });
+avatarZoomInput.addEventListener('input', renderAvatarCrop);
+avatarCropImage.addEventListener('load', () => {
+  const size = avatarCropViewport.clientWidth;
+  avatarCropBaseScale = Math.max(size / avatarCropImage.naturalWidth, size / avatarCropImage.naturalHeight);
+  avatarCropPosition = { x: 0, y: 0 };
+  avatarZoomInput.value = '1';
+  renderAvatarCrop();
+});
+avatarCropViewport.addEventListener('pointerdown', (event) => {
+  avatarCropDrag = { x: event.clientX, y: event.clientY, offsetX: avatarCropPosition.x, offsetY: avatarCropPosition.y };
+  avatarCropViewport.setPointerCapture(event.pointerId);
+});
+avatarCropViewport.addEventListener('pointermove', (event) => {
+  if (!avatarCropDrag) return;
+  avatarCropPosition = { x: avatarCropDrag.offsetX + event.clientX - avatarCropDrag.x, y: avatarCropDrag.offsetY + event.clientY - avatarCropDrag.y };
+  renderAvatarCrop();
+});
+avatarCropViewport.addEventListener('pointerup', () => { avatarCropDrag = null; });
+avatarCropViewport.addEventListener('pointercancel', () => { avatarCropDrag = null; });
+document.getElementById('avatarCropUse').addEventListener('click', useCroppedAvatar);
 editForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   editModalError.textContent = '';
@@ -217,9 +253,9 @@ editForm.addEventListener('submit', async (event) => {
     return;
   }
   let updatedUser = result.user;
-  if (editAvatarInput.files[0]) {
+  if (pendingAvatarBlob) {
     const formData = new FormData();
-    formData.append('file', editAvatarInput.files[0]);
+    formData.append('file', pendingAvatarBlob, 'avatar.webp');
     const avatarResponse = await fetch('/api/profile/avatar', { method: 'PATCH', body: formData });
     const avatarResult = await avatarResponse.json();
     if (!avatarResponse.ok) {
@@ -232,6 +268,60 @@ editForm.addEventListener('submit', async (event) => {
   enterApp(updatedUser);
   showToast('อัปเดตโปรไฟล์แล้ว');
 });
+
+function openAvatarCrop(file) {
+  if (!file.type.startsWith('image/')) {
+    editModalError.textContent = 'กรุณาเลือกรูปภาพเท่านั้น';
+    editAvatarInput.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    avatarCropImage.src = reader.result;
+    avatarCropModal.classList.add('visible');
+    avatarCropModal.setAttribute('aria-hidden', 'false');
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderAvatarCrop() {
+  if (!avatarCropImage.naturalWidth) return;
+  const zoom = Number(avatarZoomInput.value);
+  const width = avatarCropImage.naturalWidth * avatarCropBaseScale * zoom;
+  const height = avatarCropImage.naturalHeight * avatarCropBaseScale * zoom;
+  const maxX = Math.max(0, (width - avatarCropViewport.clientWidth) / 2);
+  const maxY = Math.max(0, (height - avatarCropViewport.clientHeight) / 2);
+  avatarCropPosition.x = Math.max(-maxX, Math.min(maxX, avatarCropPosition.x));
+  avatarCropPosition.y = Math.max(-maxY, Math.min(maxY, avatarCropPosition.y));
+  avatarCropImage.style.width = `${width}px`;
+  avatarCropImage.style.height = `${height}px`;
+  avatarCropImage.style.transform = `translate(calc(-50% + ${avatarCropPosition.x}px), calc(-50% + ${avatarCropPosition.y}px))`;
+}
+
+function closeAvatarCrop() {
+  avatarCropModal.classList.remove('visible');
+  avatarCropModal.setAttribute('aria-hidden', 'true');
+  editAvatarInput.value = '';
+}
+
+function useCroppedAvatar() {
+  const size = avatarCropViewport.clientWidth;
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext('2d');
+  const zoom = Number(avatarZoomInput.value);
+  const scale = avatarCropBaseScale * zoom * (canvas.width / size);
+  const x = (canvas.width - avatarCropImage.naturalWidth * scale) / 2 + avatarCropPosition.x * (canvas.width / size);
+  const y = (canvas.height - avatarCropImage.naturalHeight * scale) / 2 + avatarCropPosition.y * (canvas.height / size);
+  context.drawImage(avatarCropImage, x, y, avatarCropImage.naturalWidth * scale, avatarCropImage.naturalHeight * scale);
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    pendingAvatarBlob = blob;
+    closeAvatarCrop();
+    editModalError.textContent = '';
+  }, 'image/webp', .9);
+}
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();

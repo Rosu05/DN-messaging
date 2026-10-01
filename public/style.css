@@ -183,6 +183,18 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .edit-actions button { min-height: 44px; border-radius: 10px; font-size: 13px; font-weight: 700; }
 .edit-cancel { color: #d7d8de; background: #3a3e47; }
 .edit-submit { color: #fff; background: linear-gradient(135deg, #7b35f5, #d63e9a); }
+.edit-form input[type="file"] { height: auto; padding: 10px 12px; color: #c8cad1; font-size: 12px; }
+.avatar-crop-modal { position: fixed; inset: 0; z-index: 34; display: none; place-items: center; padding: 18px; background: rgba(8, 10, 15, .72); backdrop-filter: blur(9px); }
+.avatar-crop-modal.visible { display: grid; animation: fade-in .16s ease both; }
+.avatar-crop-sheet { width: min(420px, 100%); overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; color: #f4f4f6; background: linear-gradient(180deg, #2b2f37, #1c1f24); box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.avatar-crop-content { display: grid; justify-items: center; gap: 14px; padding: 22px 24px 24px; }
+.avatar-crop-viewport { position: relative; width: min(300px, 78vw); aspect-ratio: 1; overflow: hidden; border: 2px solid rgba(255,255,255,.8); border-radius: 50%; background: #17191d; cursor: grab; touch-action: none; box-shadow: 0 0 0 999px rgba(0,0,0,.18), 0 10px 30px rgba(0,0,0,.25); }
+.avatar-crop-viewport:active { cursor: grabbing; }
+.avatar-crop-viewport img { position: absolute; top: 50%; left: 50%; max-width: none; user-select: none; pointer-events: none; }
+.avatar-zoom-control { display: flex; align-items: center; gap: 12px; width: min(300px, 78vw); color: #d8d9de; font-size: 12px; font-weight: 700; }
+.avatar-zoom-control input { flex: 1; accent-color: #a260f7; }
+.avatar-crop-hint { color: #aeb1ba; font-size: 11px; }
+@media (max-width: 680px) { .avatar-crop-sheet { width: min(92vw, 390px); border-radius: 16px; }.avatar-crop-content { padding: 18px 20px 20px; } }
 .contacts-header-actions { display: flex; align-items: center; gap: 6px; }
 .group-modal { position: fixed; inset: 0; z-index: 32; display: none; place-items: center; padding: 18px; background: rgba(8, 10, 15, .68); backdrop-filter: blur(8px); }
 .group-modal.visible { display: grid; animation: fade-in .16s ease both; }

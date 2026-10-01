@@ -209,6 +209,12 @@
       </form>
     </section>
   </div>
+  <div class="avatar-crop-modal" id="avatarCropModal" aria-hidden="true">
+    <section class="avatar-crop-sheet" role="dialog" aria-modal="true" aria-labelledby="avatarCropTitle">
+      <header class="edit-header"><h2 id="avatarCropTitle">จัดตำแหน่งรูปโปรไฟล์</h2><button type="button" class="settings-close" id="avatarCropClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <div class="avatar-crop-content"><div class="avatar-crop-viewport" id="avatarCropViewport"><img id="avatarCropImage" alt="ตัวอย่างรูปโปรไฟล์"></div><label class="avatar-zoom-control"><span>ซูม</span><input id="avatarZoomInput" type="range" min="1" max="3" step="0.01" value="1"></label><p class="avatar-crop-hint">ลากรูปเพื่อเลือกส่วนที่ต้องการ</p><div class="edit-actions"><button type="button" class="edit-cancel" id="avatarCropCancel">ยกเลิก</button><button type="button" class="edit-submit" id="avatarCropUse">ใช้รูปนี้</button></div></div>
+    </section>
+  </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js?v=20261002"></script>
