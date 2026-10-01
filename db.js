@@ -29,6 +29,15 @@ async function initializeDatabase() {
       joined_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (room_id, user_id)
     )`,
+    `CREATE TABLE IF NOT EXISTS group_invites (
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      invited_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      responded_at TEXT,
+      PRIMARY KEY (room_id, user_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -109,6 +118,11 @@ async function initializeDatabase() {
       if (!error.message?.includes('duplicate column name')) throw error;
     }
   }
+
+  await db.batch([
+    { sql: "INSERT OR IGNORE INTO rooms (id, name) VALUES ('group:main', 'Data Networking Community')" },
+    { sql: "INSERT OR IGNORE INTO group_invites (room_id, user_id, invited_by) SELECT 'group:main', id, id FROM users WHERE id NOT IN (SELECT user_id FROM room_members WHERE room_id = 'group:main')" }
+  ], 'write');
 
   console.log('Turso database schema is ready.');
 }

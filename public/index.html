@@ -127,10 +127,22 @@
 
   <div class="contacts-modal" id="contactsModal" aria-hidden="true">
     <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">
-      <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><div class="contacts-header-actions"><button type="button" class="icon-button" id="createGroupButton" title="สร้างกลุ่ม" aria-label="สร้างกลุ่ม"><i class="fa-solid fa-users-gear"></i></button><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div></header>
       <div class="notes-strip"><button class="note-card own-note"><span class="note-avatar" id="noteAvatar">U</span><strong>Your note</strong></button><div id="friendNotes" class="friend-notes"></div></div>
       <label class="contacts-search" aria-label="Search contacts"><i class="fa-solid fa-magnifying-glass"></i><input id="contactsSearchInput" type="search" placeholder="ค้นหาชื่อเพื่อน" autocomplete="off"></label>
-      <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div><h3>ผู้ใช้ที่บล็อก</h3><div id="blockedList" class="people-list"><p class="empty-contacts">ยังไม่มีผู้ใช้ที่บล็อก</p></div></div>
+      <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><div id="groupInvitesSection" hidden><h3>คำเชิญเข้ากลุ่ม <span class="request-count" id="groupInviteCount"></span></h3><div id="groupInvitesList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div><h3>ผู้ใช้ที่บล็อก</h3><div id="blockedList" class="people-list"><p class="empty-contacts">ยังไม่มีผู้ใช้ที่บล็อก</p></div></div>
+    </section>
+  </div>
+
+  <div class="group-modal" id="groupModal" aria-hidden="true">
+    <section class="group-sheet" role="dialog" aria-modal="true" aria-labelledby="groupTitle">
+      <header class="contacts-header"><div><span class="eyebrow">New conversation</span><h2 id="groupTitle">สร้างแชทกลุ่ม</h2></div><button type="button" class="settings-close" id="groupClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <form id="groupForm" class="group-form">
+        <label>ชื่อกลุ่ม<input id="groupNameInput" maxlength="60" placeholder="เช่น ทีมโปรเจกต์" required></label>
+        <div><strong class="group-members-label">เลือกเพื่อนเพื่อส่งคำเชิญ (สมาชิกสูงสุด 100 คน)</strong><div id="groupMembersList" class="group-members-list"><p class="empty-contacts">กำลังโหลดรายชื่อ...</p></div></div>
+        <p class="group-error" id="groupError" role="alert"></p>
+        <div class="edit-actions"><button type="button" class="edit-cancel" id="groupCancel">ยกเลิก</button><button type="submit" class="edit-submit">สร้างกลุ่ม</button></div>
+      </form>
     </section>
   </div>
 
@@ -191,6 +203,6 @@
   </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/client.js?v=20260922"></script>
+  <script src="/client.js?v=20261001"></script>
 </body>
 </html>

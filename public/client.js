@@ -36,6 +36,11 @@ const profileButton = document.getElementById('profileButton');
 const profileMenu = document.getElementById('profileMenu');
 const settingsModal = document.getElementById('settingsModal');
 const contactsModal = document.getElementById('contactsModal');
+const groupModal = document.getElementById('groupModal');
+const groupForm = document.getElementById('groupForm');
+const groupNameInput = document.getElementById('groupNameInput');
+const groupMembersList = document.getElementById('groupMembersList');
+const groupError = document.getElementById('groupError');
 const editModal = document.getElementById('editModal');
 const editForm = document.getElementById('editForm');
 const editModalTitle = document.getElementById('editModalTitle');
@@ -273,6 +278,11 @@ document.getElementById('editProfileButton').addEventListener('click', () => {
 document.getElementById('contactsButton').addEventListener('click', openContacts);
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
+document.getElementById('createGroupButton').addEventListener('click', openGroupModal);
+document.getElementById('groupClose').addEventListener('click', closeGroupModal);
+document.getElementById('groupCancel').addEventListener('click', closeGroupModal);
+groupModal.addEventListener('click', (event) => { if (event.target === groupModal) closeGroupModal(); });
+groupForm.addEventListener('submit', createGroup);
 homeButton.addEventListener('click', goToHome);
 document.getElementById('mobileBackButton').addEventListener('click', () => {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
@@ -330,11 +340,33 @@ async function openContacts(query = '') {
     renderFriendNotes(result.friends);
     renderInboxNotes(result.friends);
     renderFriendRequests(result.requests);
+    await loadGroupInvites();
     await loadBlockedUsers();
     setContactBadge(result.requestCount);
   } catch (_error) {
     document.getElementById('friendsList').innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
   }
+}
+
+async function loadGroupInvites() {
+  const section = document.getElementById('groupInvitesSection');
+  const list = document.getElementById('groupInvitesList');
+  const response = await fetch('/api/group-invites');
+  if (!response.ok) return;
+  const { invites } = await response.json();
+  section.hidden = !invites.length;
+  document.getElementById('groupInviteCount').textContent = invites.length ? `(${invites.length})` : '';
+  list.innerHTML = invites.map((invite) => `<div class="request-row group-invite-row"><span class="person-avatar">G</span><span class="person-copy"><strong>${escapeHtml(invite.name)}</strong><small>เชิญโดย ${escapeHtml(invite.inviterName)}</small></span><button class="request-action accept" data-group-response="accept" data-group-id="${invite.id}">เข้าร่วม</button><button class="request-action decline" data-group-response="decline" data-group-id="${invite.id}">ปฏิเสธ</button></div>`).join('');
+  list.querySelectorAll('[data-group-response]').forEach((button) => button.addEventListener('click', () => respondToGroupInvite(button.dataset.groupId, button.dataset.groupResponse === 'accept')));
+}
+
+async function respondToGroupInvite(groupId, accepted) {
+  const response = await fetch(`/api/groups/${encodeURIComponent(groupId)}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accepted }) });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'ดำเนินการกับคำเชิญไม่สำเร็จ');
+  showToast(accepted ? 'เข้าร่วมกลุ่มแล้ว' : 'ปฏิเสธคำเชิญแล้ว');
+  await loadGroupInvites();
+  await loadConversations();
 }
 
 async function loadBlockedUsers() {
@@ -386,6 +418,8 @@ function goToHome() {
   setMessageTab('messages');
   document.querySelectorAll('.mobile-nav-button').forEach((item) => item.classList.toggle('active', item.dataset.mobileNav === 'messages'));
   document.getElementById('appShell').classList.remove('mobile-chat-open');
+  document.getElementById('audioCallButton').disabled = false;
+  document.getElementById('videoCallButton').disabled = false;
   document.getElementById('chatAvatar').textContent = '?';
   document.getElementById('chatContactName').textContent = 'เลือกเพื่อน';
   updateChatStatusText('พร้อมเริ่มการสนทนา', false);
@@ -395,6 +429,46 @@ function goToHome() {
 function closeContacts() {
   contactsModal.classList.remove('visible');
   contactsModal.setAttribute('aria-hidden', 'true');
+}
+
+async function openGroupModal() {
+  groupError.textContent = '';
+  groupNameInput.value = '';
+  groupMembersList.innerHTML = '<p class="empty-contacts">กำลังโหลดรายชื่อ...</p>';
+  groupModal.classList.add('visible');
+  groupModal.setAttribute('aria-hidden', 'false');
+  try {
+    const response = await fetch('/api/contacts');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    groupMembersList.innerHTML = result.friends.length ? result.friends.map((friend) => `<label class="group-member-option"><input type="checkbox" value="${friend.id}"><span class="person-avatar">${escapeHtml(friend.username.slice(0, 2).toUpperCase())}</span><span><strong>${escapeHtml(friend.username)}</strong><small>${friend.online ? 'ออนไลน์' : 'ออฟไลน์'}</small></span></label>`).join('') : '<p class="empty-contacts">ต้องมีเพื่อนก่อนจึงจะสร้างกลุ่มได้</p>';
+    groupNameInput.focus();
+  } catch (_error) {
+    groupMembersList.innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
+  }
+}
+
+function closeGroupModal() {
+  groupModal.classList.remove('visible');
+  groupModal.setAttribute('aria-hidden', 'true');
+}
+
+async function createGroup(event) {
+  event.preventDefault();
+  groupError.textContent = '';
+  const name = groupNameInput.value.trim();
+  const memberIds = [...groupMembersList.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+  const response = await fetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, memberIds }) });
+  const result = await response.json();
+  if (!response.ok) {
+    groupError.textContent = result.error || 'สร้างกลุ่มไม่สำเร็จ';
+    return;
+  }
+  closeGroupModal();
+  closeContacts();
+  await loadConversations();
+  selectConversation(result.group);
+  showToast('สร้างกลุ่มแล้ว');
 }
 
 function renderPeople(elementId, people, showAddButton) {
@@ -476,22 +550,28 @@ async function addFriend(friendId) {
   else showToast((await response.json()).error || 'ส่งคำขอไม่สำเร็จ');
 }
 
-function selectContact(contact) {
+function selectConversation(contact) {
   chatSelectionToken += 1;
   selectedContact = contact;
-  document.getElementById('chatAvatar').textContent = contact.username.slice(0, 2).toUpperCase();
-  document.getElementById('chatContactName').textContent = contact.username;
-  updateChatStatusText(contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์', false);
+  document.getElementById('chatAvatar').textContent = contact.isGroup ? 'G' : contact.username.slice(0, 2).toUpperCase();
+  document.getElementById('chatContactName').textContent = contact.isGroup ? contact.name : contact.username;
+  updateChatStatusText(contact.isGroup ? `${contact.memberCount || 0} สมาชิก` : (contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์'), false);
   clearChatArea();
   closeContacts();
   document.getElementById('appShell').classList.add('mobile-chat-open');
-  activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
-  fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => {
-    if (socket.connected) socket.emit('read-conversation', { peerId: contact.id });
-    loadConversations().catch(() => {});
-  }).catch(() => {});
-  if (socket.connected) socket.emit('join-room', { peerId: contact.id, selectionToken: chatSelectionToken });
+  activeRoomId = contact.isGroup ? contact.id : `direct:${[currentUser.id, contact.id].sort().join(':')}`;
+  document.getElementById('audioCallButton').disabled = Boolean(contact.isGroup);
+  document.getElementById('videoCallButton').disabled = Boolean(contact.isGroup);
+  if (!contact.isGroup) {
+    fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => {
+      if (socket.connected) socket.emit('read-conversation', { peerId: contact.id });
+      loadConversations().catch(() => {});
+    }).catch(() => {});
+  }
+  if (socket.connected) socket.emit('join-room', contact.isGroup ? { roomId: contact.id, selectionToken: chatSelectionToken } : { peerId: contact.id, selectionToken: chatSelectionToken });
 }
+
+function selectContact(contact) { selectConversation(contact); }
 
 function clearChatArea() {
   oldestMessageTimestamp = null;
@@ -500,18 +580,24 @@ function clearChatArea() {
   document.getElementById('loadOlderMessages').addEventListener('click', loadOlderMessages);
 }
 
-function renderConversationList(conversations) {
+function renderConversationList(conversations, groups = []) {
   const container = document.getElementById('conversationList');
-  if (!conversations.length) {
+  const items = [...groups, ...conversations];
+  if (!items.length) {
     container.innerHTML = '<div class="conversation-empty">ยังไม่มีประวัติแชท เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div>';
     return;
   }
-  container.innerHTML = conversations.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}"><span class="avatar violet">${person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.username)}</strong><span>${escapeHtml(person.lastText || 'เริ่มการสนทนา')}</span></span>${person.unreadCount ? `<b class="unread-count">${person.unreadCount > 99 ? '99+' : person.unreadCount}</b>` : ''}<time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
+  container.innerHTML = items.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}" data-conversation-type="${person.isGroup ? 'group' : 'direct'}"><span class="avatar violet">${person.isGroup ? 'G' : person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.isGroup ? person.name : person.username)}</strong><span>${escapeHtml(person.lastText || (person.isGroup ? `${person.memberCount} สมาชิก` : 'เริ่มการสนทนา'))}</span></span>${person.unreadCount ? `<b class="unread-count">${person.unreadCount > 99 ? '99+' : person.unreadCount}</b>` : ''}<time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
   container.querySelectorAll('[data-conversation-id]').forEach((button) => button.addEventListener('click', async () => {
+    if (button.dataset.conversationType === 'group') {
+      const group = items.find((item) => item.id === button.dataset.conversationId);
+      if (group) selectConversation(group);
+      return;
+    }
     const response = await fetch('/api/contacts');
     const result = await response.json();
     const contact = result.friends.find((friend) => friend.id === button.dataset.conversationId);
-    if (contact) selectContact(contact);
+    if (contact) selectConversation(contact);
   }));
 }
 
@@ -535,8 +621,10 @@ function renderSearchResults(messages) {
 }
 
 async function loadConversations() {
-  const response = await fetch('/api/conversations');
-  if (response.ok) renderConversationList((await response.json()).conversations);
+  const [conversationResponse, groupResponse] = await Promise.all([fetch('/api/conversations'), fetch('/api/groups')]);
+  if (conversationResponse.ok && groupResponse.ok) {
+    renderConversationList((await conversationResponse.json()).conversations, (await groupResponse.json()).groups);
+  }
 }
 
 function escapeHtml(value) {
@@ -582,7 +670,7 @@ function enterApp(user) {
 }
 
 socket.on('connect', () => {
-  if (selectedContact) socket.emit('join-room', { peerId: selectedContact.id, selectionToken: chatSelectionToken });
+  if (selectedContact) socket.emit('join-room', selectedContact.isGroup ? { roomId: selectedContact.id, selectionToken: chatSelectionToken } : { peerId: selectedContact.id, selectionToken: chatSelectionToken });
 });
 socket.on('presence-state', ({ userId, online, status }) => {
   if (!userId) return;
@@ -598,6 +686,7 @@ socket.on('presence-state', ({ userId, online, status }) => {
 });
 socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
+  if (selectedContact?.isGroup) return updateChatStatusText(`${selectedContact.memberCount || 0} สมาชิก`, false);
   document.getElementById('chatContactStatus').textContent = participantCount > 1 ? 'ออนไลน์อยู่' : 'ออฟไลน์';
 });
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
@@ -693,7 +782,7 @@ socket.on('chat-message', (message) => {
     socket.emit('read-conversation', { peerId: selectedContact.id });
   }
   loadConversations().catch(() => {});
-  if (message.senderId !== currentUser?.id && (!selectedContact || message.senderId !== selectedContact.id)) notifyIncomingMessage(message);
+  if (message.senderId !== currentUser?.id && (!selectedContact || message.roomId !== activeRoomId)) notifyIncomingMessage(message);
 });
 socket.on('message-edited', ({ messageId, text, editedAt }) => {
   const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
@@ -762,6 +851,7 @@ document.getElementById('shareScreenButton').addEventListener('click', shareScre
 
 async function startCall(mode) {
   if (peerConnection) return;
+  if (selectedContact?.isGroup) return showToast('การโทรกลุ่มยังไม่เปิดใช้งาน');
   if (!selectedContact || !activeRoomId) return showToast('เลือกเพื่อนก่อนเริ่มโทร');
   activeCallMode = mode;
   isCaller = true;
