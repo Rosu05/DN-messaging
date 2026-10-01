@@ -83,12 +83,28 @@ function directRoomId(firstUserId, secondUserId) {
   return `direct:${[firstUserId, secondUserId].sort().join(':')}`;
 }
 
+async function revokeConversation(firstUserId, secondUserId) {
+  const roomId = directRoomId(firstUserId, secondUserId);
+  io.to(roomId).emit('conversation-revoked');
+  if (db) {
+    await db.execute({
+      sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE room_id = ? AND status IN ('ringing', 'answered')",
+      args: [roomId]
+    });
+  }
+  await io.in(roomId).socketsLeave(roomId);
+}
+
 function isUserOnline(userId) {
   return [...io.sockets.sockets.values()].some((socket) => socket.data.userId === userId);
 }
 
+function broadcastPresence(userId, online) {
+  io.emit('presence-state', { userId, online, status: online ? 'online' : 'offline' });
+}
+
 function contactView(user) {
-  return { id: user.id, username: user.username, online: isUserOnline(user.id) };
+  return { id: user.id, username: user.username, online: isUserOnline(user.id), status: isUserOnline(user.id) ? 'online' : 'offline' };
 }
 
 function uploadFilenameFromUrl(url) {
@@ -213,6 +229,7 @@ app.patch('/api/profile/password', authLimiter, async (request, response) => {
 
 app.get('/api/contacts', async (request, response) => {
   const userId = authenticatedUserId(request);
+  const filterQuery = typeof request.query.q === 'string' ? request.query.q.trim().toLowerCase() : '';
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const friends = await db.execute({
@@ -237,7 +254,13 @@ app.get('/api/contacts', async (request, response) => {
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
         ORDER BY f.created_at DESC`, args: [userId, userId, userId]
     });
-    response.json({ friends: friends.rows.map(contactView), suggestions: suggestions.rows.map(contactView), requests: requests.rows.map(contactView), requestCount: requests.rows.length });
+    const filterPeople = (people) => filterQuery ? people.filter((person) => person.username.toLowerCase().includes(filterQuery)) : people;
+    response.json({
+      friends: filterPeople(friends.rows.map(contactView)),
+      suggestions: filterPeople(suggestions.rows.map(contactView)),
+      requests: filterPeople(requests.rows.map(contactView)),
+      requestCount: requests.rows.length
+    });
   } catch (_error) {
     response.status(500).json({ error: 'Could not load contacts' });
   }
@@ -276,9 +299,14 @@ app.post('/api/conversations/:friendId/read', async (request, response) => {
   const userId = authenticatedUserId(request);
   const friendId = request.params.friendId;
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  const roomId = directRoomId(userId, friendId);
+  const readAt = new Date().toISOString();
   try {
-    await db.execute({ sql: "UPDATE messages SET read_at = datetime('now') WHERE room_id = ? AND user_id <> ? AND read_at IS NULL", args: [directRoomId(userId, friendId), userId] });
-    response.json({ read: true });
+    const result = await db.execute({ sql: "UPDATE messages SET read_at = COALESCE(read_at, ?) WHERE room_id = ? AND user_id <> ? AND read_at IS NULL", args: [readAt, roomId, userId] });
+    if (result.rowsAffected) {
+      io.to(roomId).emit('messages-read', { roomId, readerId: userId, readAt });
+    }
+    response.json({ read: true, readAt });
   } catch (_error) {
     response.status(500).json({ error: 'Could not mark messages as read' });
   }
@@ -433,6 +461,7 @@ app.delete('/api/contacts/:friendId', async (request, response) => {
   await db.batch([
     { sql: 'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)', args: [userId, request.params.friendId, request.params.friendId, userId] }
   ], 'write');
+  await revokeConversation(userId, request.params.friendId);
   response.status(204).end();
 });
 
@@ -445,6 +474,7 @@ app.post('/api/contacts/:friendId/block', async (request, response) => {
     { sql: 'INSERT OR IGNORE INTO blocked_users (user_id, blocked_user_id) VALUES (?, ?)', args: [userId, friendId] },
     { sql: 'DELETE FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)', args: [userId, friendId, friendId, userId] }
   ], 'write');
+  await revokeConversation(userId, friendId);
   response.status(204).end();
 });
 
@@ -519,17 +549,38 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const roomForSocket = () => socket.data.roomId;
+  broadcastPresence(socket.data.userId, true);
+
+  socket.on('disconnect', () => {
+    broadcastPresence(socket.data.userId, false);
+  });
+
+  async function socketCanUseRoom() {
+    const roomId = roomForSocket();
+    if (!db || !roomId || !socket.rooms.has(roomId)) return false;
+    const [, firstId, secondId] = roomId.split(':');
+    const peerId = firstId === socket.data.userId ? secondId : firstId;
+    if (!peerId || peerId === socket.data.userId) return false;
+    const result = await db.execute({
+      sql: `SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = ? AND f.status = 'accepted'
+        AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = ?) OR (b.user_id = ? AND b.blocked_user_id = ?))`,
+      args: [socket.data.userId, peerId, socket.data.userId, peerId, peerId, socket.data.userId]
+    });
+    return result.rows.length > 0;
+  }
   socket.data.messageWindow = [];
 
   socket.on('join-room', async ({ peerId, selectionToken }) => {
-    if (typeof peerId !== 'string' || peerId === socket.data.userId) return;
+    if (typeof peerId !== 'string' || peerId === socket.data.userId || !db) {
+      return socket.emit('chat-error', { message: 'Conversation service is unavailable' });
+    }
     try {
-      const membership = await db?.execute({
+      const membership = await db.execute({
         sql: `SELECT 1 FROM friendships f WHERE f.user_id = ? AND f.friend_id = ? AND f.status = 'accepted'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = ?) OR (b.user_id = ? AND b.blocked_user_id = ?))`,
         args: [socket.data.userId, peerId, socket.data.userId, peerId, peerId, socket.data.userId]
       });
-      if (db && !membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
+      if (!membership.rows.length) return socket.emit('chat-error', { message: 'You can only message accepted friends' });
       const safeRoomId = directRoomId(socket.data.userId, peerId);
       let safeUsername = 'User';
       if (db) {
@@ -584,7 +635,7 @@ io.on('connection', (socket) => {
       text: text.trim(),
       timestamp: new Date().toISOString()
     };
-    if (!socket.data.roomId) return;
+    if (!await socketCanUseRoom()) return socket.emit('chat-error', { message: 'Conversation access has been revoked' });
     try {
       if (attachment) {
         const filename = uploadFilenameFromUrl(attachment.url);
@@ -598,7 +649,7 @@ io.on('connection', (socket) => {
         if (replyResult.rows.length) safeReplyTo = replyTo;
       }
       if (safeReplyTo) message.replyTo = safeReplyTo;
-      if (db) db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] }).catch(() => {});
+      await db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] });
     } catch (_error) {
       return socket.emit('chat-error', { message: 'Could not send message' });
     }
@@ -607,7 +658,7 @@ io.on('connection', (socket) => {
 
   socket.on('react-message', async ({ messageId, emoji }) => {
     const allowedEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
-    if (!db || !socket.data.roomId || typeof messageId !== 'string' || !allowedEmojis.includes(emoji)) return;
+    if (!db || typeof messageId !== 'string' || !allowedEmojis.includes(emoji) || !await socketCanUseRoom()) return;
     try {
       const messageResult = await db.execute({ sql: 'SELECT reaction_json AS reactions FROM messages WHERE id = ? AND room_id = ?', args: [messageId, roomForSocket()] });
       if (!messageResult.rows.length) return;
@@ -622,11 +673,28 @@ io.on('connection', (socket) => {
 
   socket.on('typing', ({ active }) => {
     if (!socket.data.roomId) return;
-    socket.to(roomForSocket()).emit('typing', { active: Boolean(active), username: socket.data.username || 'เพื่อน' });
+    socketCanUseRoom().then((allowed) => {
+      if (allowed) socket.to(roomForSocket()).emit('typing', { active: Boolean(active), username: socket.data.username || 'เพื่อน' });
+    }).catch(() => {});
+  });
+
+  socket.on('read-conversation', async ({ peerId } = {}) => {
+    if (!peerId || !socket.data.roomId) return;
+    try {
+      const roomId = directRoomId(socket.data.userId, peerId);
+      const readAt = new Date().toISOString();
+      const result = await db.execute({
+        sql: "UPDATE messages SET read_at = COALESCE(read_at, ?) WHERE room_id = ? AND user_id <> ? AND read_at IS NULL",
+        args: [readAt, roomId, socket.data.userId]
+      });
+      if (result.rowsAffected) {
+        io.to(roomId).emit('messages-read', { roomId, readerId: socket.data.userId, readAt });
+      }
+    } catch (_error) {}
   });
 
   socket.on('edit-message', async ({ messageId, text }) => {
-    if (typeof messageId !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 2000 || !socket.data.roomId || !db) return;
+    if (typeof messageId !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 2000 || !db || !await socketCanUseRoom()) return;
     try {
       const updatedAt = new Date().toISOString();
       const result = await db.execute({ sql: 'UPDATE messages SET text = ?, edited_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: [text.trim(), updatedAt, messageId, socket.data.userId, roomForSocket()] });
@@ -635,7 +703,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('delete-message', async ({ messageId }) => {
-    if (typeof messageId !== 'string' || !socket.data.roomId || !db) return;
+    if (typeof messageId !== 'string' || !db || !await socketCanUseRoom()) return;
     try {
       const deletedAt = new Date().toISOString();
       const result = await db.execute({ sql: 'UPDATE messages SET text = ?, attachment_json = NULL, deleted_at = ? WHERE id = ? AND user_id = ? AND room_id = ?', args: ['ข้อความถูกลบแล้ว', deletedAt, messageId, socket.data.userId, roomForSocket()] });
@@ -643,52 +711,104 @@ io.on('connection', (socket) => {
     } catch (_error) {}
   });
 
-  socket.on('call-user', ({ mode }) => {
-    if (!socket.data.roomId) return;
-    const target = [...(io.sockets.adapter.rooms.get(roomForSocket()) || [])].find((socketId) => socketId !== socket.id);
-    const targetSocket = target ? io.sockets.sockets.get(target) : null;
-    if (!targetSocket || targetSocket.data.callId) return socket.emit('call-busy');
-    socket.data.callId = crypto.randomUUID();
-    if (db) db.execute({ sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)', args: [socket.data.callId, roomForSocket(), socket.data.userId, targetSocket.data.userId, mode === 'audio' ? 'audio' : 'video', 'ringing'] }).catch(() => {});
-    socket.to(roomForSocket()).emit('incoming-call', {
-      callerId: socket.id,
-      callId: socket.data.callId,
-      callerName: socket.data.username || 'Guest',
-      mode: mode === 'audio' ? 'audio' : 'video'
-    });
+  socket.on('call-user', async ({ mode } = {}) => {
+    socket.data.endCallRequested = false;
+    if (!await socketCanUseRoom()) return socket.emit('call-busy');
+    try {
+      const roomSockets = await io.in(roomForSocket()).fetchSockets();
+      const targetSocket = roomSockets.find((candidate) => candidate.data.userId !== socket.data.userId);
+      if (!targetSocket) return socket.emit('call-busy');
+      const active = await db.execute({
+        sql: "SELECT 1 FROM calls WHERE status IN ('ringing', 'answered') AND (caller_id = ? OR callee_id = ? OR caller_id = ? OR callee_id = ?) LIMIT 1",
+        args: [targetSocket.data.userId, targetSocket.data.userId, socket.data.userId, socket.data.userId]
+      });
+      if (active.rows.length) return socket.emit('call-busy');
+      const callId = crypto.randomUUID();
+      await db.execute({
+        sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [callId, roomForSocket(), socket.data.userId, targetSocket.data.userId, mode === 'audio' ? 'audio' : 'video', 'ringing']
+      });
+      socket.data.callId = callId;
+      if (!socket.connected || socket.data.endCallRequested) {
+        await db.execute({ sql: "UPDATE calls SET status = 'missed', ended_at = datetime('now') WHERE id = ? AND status = 'ringing'", args: [callId] });
+        socket.data.callId = null;
+        return;
+      }
+      socket.emit('call-started', { callId });
+      targetSocket.emit('incoming-call', {
+        callerId: socket.id,
+        callId,
+        callerName: socket.data.username || 'Guest',
+        mode: mode === 'audio' ? 'audio' : 'video'
+      });
+    } catch (_error) {
+      socket.emit('call-busy');
+    }
   });
 
   for (const [eventName, status] of [['call-accepted', 'answered'], ['call-rejected', 'rejected']]) {
-    socket.on(eventName, ({ targetId, callId }) => {
-      if (typeof targetId !== 'string' || typeof callId !== 'string' || !socket.data.roomId) return;
-      const targetSocket = io.sockets.sockets.get(targetId);
-      if (!targetSocket || targetSocket.data.roomId !== socket.data.roomId) return;
-      targetSocket.data.callId = callId;
-      if (db) db.execute({ sql: 'UPDATE calls SET status = ? WHERE id = ? AND callee_id = ? AND status = \'ringing\'', args: [status, callId, socket.data.userId] }).catch(() => {});
-      targetSocket.emit(eventName, { senderId: socket.id });
+    socket.on(eventName, async ({ targetId, callId } = {}) => {
+      if (typeof targetId !== 'string' || typeof callId !== 'string' || !await socketCanUseRoom()) return;
+      try {
+        const [targetSocket] = await io.in(targetId).fetchSockets();
+        if (!targetSocket || targetSocket.data.roomId !== roomForSocket()) return;
+        const result = await db.execute({
+          sql: "UPDATE calls SET status = ?, ended_at = CASE WHEN ? = 'answered' THEN ended_at ELSE datetime('now') END WHERE id = ? AND caller_id = ? AND callee_id = ? AND status = 'ringing'",
+          args: [status, status, callId, targetSocket.data.userId, socket.data.userId]
+        });
+        if (!result.rowsAffected) return;
+        if (status === 'answered') socket.data.callId = callId;
+        targetSocket.emit(eventName, { senderId: socket.id, callId });
+      } catch (_error) {}
     });
   }
 
-  // These signaling packets carry SDP and ICE metadata only. WebRTC media does
-  // not pass through this Node process after the peer connection is established.
+  // Validate every signaling packet against the persisted call participants.
+  // Adapter room/socket targeting works across instances when Redis is enabled.
   for (const eventName of ['webrtc-offer', 'webrtc-answer', 'ice-candidate']) {
-    socket.on(eventName, ({ targetId, ...payload }) => {
-      if (typeof targetId !== 'string' || !socket.data.roomId) return;
-      const targetSocket = io.sockets.sockets.get(targetId);
-      if (!targetSocket || targetSocket.data.roomId !== socket.data.roomId) return;
-      targetSocket.emit(eventName, { senderId: socket.id, ...payload });
+    socket.on(eventName, async ({ targetId, callId, ...payload } = {}) => {
+      if (typeof targetId !== 'string' || typeof callId !== 'string' || !await socketCanUseRoom()) return;
+      try {
+        const [targetSocket] = await io.in(targetId).fetchSockets();
+        if (!targetSocket || targetSocket.data.roomId !== roomForSocket()) return;
+        const call = await db.execute({
+          sql: "SELECT 1 FROM calls WHERE id = ? AND status = 'answered' AND ((caller_id = ? AND callee_id = ?) OR (caller_id = ? AND callee_id = ?))",
+          args: [callId, socket.data.userId, targetSocket.data.userId, targetSocket.data.userId, socket.data.userId]
+        });
+        if (!call.rows.length) return;
+        targetSocket.emit(eventName, { senderId: socket.id, callId, ...payload });
+      } catch (_error) {}
     });
   }
 
-  socket.on('end-call', () => {
-    if (db && socket.data.callId) db.execute({ sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE id = ?", args: [socket.data.callId] }).catch(() => {});
-    if (socket.data.roomId) socket.to(roomForSocket()).emit('call-ended');
+  socket.on('end-call', async ({ callId } = {}) => {
+    const activeCallId = typeof callId === 'string' ? callId : socket.data.callId;
+    if (!activeCallId) {
+      socket.data.endCallRequested = true;
+      return;
+    }
+    if (!db) return;
+    try {
+      const result = await db.execute({
+        sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE id = ? AND (caller_id = ? OR callee_id = ?) AND status IN ('ringing', 'answered')",
+        args: [activeCallId, socket.data.userId, socket.data.userId]
+      });
+      if (result.rowsAffected) io.to(roomForSocket()).emit('call-ended', { callId: activeCallId });
+    } catch (_error) {}
     socket.data.callId = null;
   });
 
-  socket.on('disconnecting', () => {
+  socket.on('disconnecting', async () => {
     for (const roomId of socket.rooms) {
-      if (roomId !== socket.id) socket.to(roomId).emit('peer-left');
+      if (roomId === socket.id) continue;
+      socket.to(roomId).emit('peer-left');
+      if (db && socket.data.callId) {
+        await db.execute({
+          sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE id = ? AND status IN ('ringing', 'answered')",
+          args: [socket.data.callId]
+        }).catch(() => {});
+        socket.to(roomId).emit('call-ended', { callId: socket.data.callId });
+      }
     }
   });
 });

@@ -28,6 +28,9 @@ test('protected endpoints reject unauthenticated requests', async () => {
   const contactsResponse = await fetch(`${baseUrl}/api/contacts`);
   assert.equal(contactsResponse.status, 401);
 
+  const filteredContactsResponse = await fetch(`${baseUrl}/api/contacts?q=alice`);
+  assert.equal(filteredContactsResponse.status, 401);
+
   const uploadResponse = await fetch(`${baseUrl}/uploads/example.txt`);
   assert.equal(uploadResponse.status, 401);
 

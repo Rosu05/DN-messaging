@@ -22,6 +22,14 @@
     .message-menu button { padding: 8px 10px; border-radius: 7px; color: var(--ink); background: transparent; text-align: left; font-size: 11px; }
     .message-menu button:hover { background: var(--soft); }
     .message-menu .delete-message:hover { color: #d43d72; }
+    .contacts-search { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
+    .contacts-search input { width: 100%; border: 0; background: transparent; color: var(--ink); font: inherit; }
+    .contacts-search input:focus { outline: none; }
+    .call-quality { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: rgba(76, 201, 148, 0.12); color: #2cab74; font-size: 11px; font-weight: 700; border: 1px solid rgba(76, 201, 148, 0.18); }
+    .call-quality .quality-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 5px rgba(76, 201, 148, 0.18); }
+    .call-quality.fair { background: rgba(255, 193, 7, 0.12); color: #d9a11a; border-color: rgba(255, 193, 7, 0.2); }
+    .call-quality.weak { background: rgba(245, 158, 11, 0.12); color: #dd8d12; border-color: rgba(245, 158, 11, 0.2); }
+    .call-quality.disconnected { background: rgba(239, 68, 68, 0.12); color: #de4d5f; border-color: rgba(239, 68, 68, 0.16); }
     @media (max-width: 680px) { .message-bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; } .message-more { display: none; } .message-tools { right: 3px; top: -8px; transform: none; } .message-row:not(.mine) .message-tools { right: 3px; left: auto; } .message-menu { top: 31px; right: 0; } }
   </style>
 </head>
@@ -97,6 +105,7 @@
     <section class="contacts-sheet" role="dialog" aria-modal="true" aria-labelledby="contactsTitle">
       <header class="contacts-header"><div><span class="eyebrow">Your network</span><h2 id="contactsTitle">เพื่อนและรายชื่อที่แนะนำ</h2></div><button type="button" class="settings-close" id="contactsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
       <div class="notes-strip"><button class="note-card own-note"><span class="note-avatar" id="noteAvatar">U</span><strong>Your note</strong></button><div id="friendNotes" class="friend-notes"></div></div>
+      <label class="contacts-search" aria-label="Search contacts"><i class="fa-solid fa-magnifying-glass"></i><input id="contactsSearchInput" type="search" placeholder="ค้นหาชื่อเพื่อน" autocomplete="off"></label>
       <div class="contacts-content"><div id="friendRequestsSection" hidden><h3>คำขอเป็นเพื่อน <span class="request-count" id="requestCount"></span></h3><div id="requestsList" class="people-list"></div></div><h3>เพื่อนทั้งหมด</h3><div id="friendsList" class="people-list"><p class="empty-contacts">ยังไม่มีเพื่อน</p></div><h3>รายชื่อที่แนะนำ</h3><div id="suggestionsList" class="people-list"><p class="empty-contacts">ยังไม่มีรายชื่อแนะนำ</p></div><h3>ผู้ใช้ที่บล็อก</h3><div id="blockedList" class="people-list"><p class="empty-contacts">ยังไม่มีผู้ใช้ที่บล็อก</p></div></div>
     </section>
   </div>
@@ -126,7 +135,7 @@
 
   <div class="call-modal" id="callModal" aria-hidden="true">
     <div class="call-stage" id="callStage">
-      <div class="call-topbar"><div class="call-person"><div class="avatar violet small">?</div><div><strong id="callTitle">เพื่อน</strong><span id="callStatus">Calling...</span></div></div><span class="secure-label"><i class="fa-solid fa-lock"></i> Secure peer connection</span></div>
+      <div class="call-topbar"><div class="call-person"><div class="avatar violet small">?</div><div><strong id="callTitle">เพื่อน</strong><span id="callStatus">Calling...</span></div></div><div class="call-quality good" id="callQuality"><span class="quality-dot"></span><span id="callQualityLabel">เครือข่ายคงที่</span></div><span class="secure-label"><i class="fa-solid fa-lock"></i> Secure peer connection</span></div>
       <video id="remoteVideo" class="remote-video" autoplay playsinline></video>
       <div class="voice-placeholder" id="voicePlaceholder"><div class="call-avatar">?</div><h2>เพื่อน</h2><p id="voiceStatus">Connecting...</p></div>
       <video id="localVideo" class="local-video" autoplay muted playsinline></video>

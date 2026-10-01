@@ -94,6 +94,7 @@ let localStream = null;
 let screenStream = null;
 let pendingIceCandidates = [];
 let activePeerId = null;
+let activeCallId = null;
 let activeCallMode = 'video';
 let isCaller = false;
 let pendingIncomingCall = null;
@@ -105,6 +106,7 @@ let replyToMessageId = null;
 let oldestMessageTimestamp = null;
 let searchRequestId = 0;
 let pendingDeleteMessageId = null;
+const presenceMap = new Map();
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -216,16 +218,22 @@ document.querySelector('.search-box input').addEventListener('input', async (eve
   loadConversations();
 });
 
+document.getElementById('contactsSearchInput')?.addEventListener('input', async (event) => {
+  const query = event.target.value.trim();
+  await openContacts(query);
+});
+
 function closeSettings() {
   settingsModal.classList.remove('visible');
   settingsModal.setAttribute('aria-hidden', 'true');
 }
 
-async function openContacts() {
+async function openContacts(query = '') {
   contactsModal.classList.add('visible');
   contactsModal.setAttribute('aria-hidden', 'false');
   try {
-    const response = await fetch('/api/contacts');
+    const url = query ? `/api/contacts?q=${encodeURIComponent(query)}` : '/api/contacts';
+    const response = await fetch(url);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     renderPeople('friendsList', result.friends, false);
@@ -308,8 +316,10 @@ function renderPeople(elementId, people, showAddButton) {
   }
   container.innerHTML = people.map((person) => {
     const initials = person.username.slice(0, 2).toUpperCase();
-    if (showAddButton) return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>แนะนำสำหรับคุณ</small></span><span class="add-person">เพิ่ม</span></button>`;
-    return `<div class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>เพื่อนของคุณ</small></span><button class="contact-action remove" data-action="remove" title="ลบเพื่อน" aria-label="ลบเพื่อน"><i class="fa-solid fa-user-minus"></i></button><button class="contact-action block" data-action="block" title="บล็อกผู้ใช้" aria-label="บล็อกผู้ใช้"><i class="fa-solid fa-ban"></i></button></div>`;
+    const online = presenceMap.get(person.id) ?? person.online ?? false;
+    const onlineLabel = online ? 'ออนไลน์' : 'ออฟไลน์';
+    if (showAddButton) return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}${online ? '<span class="online-dot"></span>' : ''}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><span class="add-person">เพิ่ม</span></button>`;
+    return `<div class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}${online ? '<span class="online-dot"></span>' : ''}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><button class="contact-action remove" data-action="remove" title="ลบเพื่อน" aria-label="ลบเพื่อน"><i class="fa-solid fa-user-minus"></i></button><button class="contact-action block" data-action="block" title="บล็อกผู้ใช้" aria-label="บล็อกผู้ใช้"><i class="fa-solid fa-ban"></i></button></div>`;
   }).join('');
   container.querySelectorAll('.person-row').forEach((row) => {
     row.addEventListener('click', (event) => {
@@ -379,7 +389,10 @@ function selectContact(contact) {
   closeContacts();
   document.getElementById('appShell').classList.add('mobile-chat-open');
   activeRoomId = `direct:${[currentUser.id, contact.id].sort().join(':')}`;
-  fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => loadConversations()).catch(() => {});
+  fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => {
+    if (socket.connected) socket.emit('read-conversation', { peerId: contact.id });
+    loadConversations().catch(() => {});
+  }).catch(() => {});
   if (socket.connected) socket.emit('join-room', { peerId: contact.id, selectionToken: chatSelectionToken });
 }
 
@@ -474,6 +487,18 @@ function enterApp(user) {
 socket.on('connect', () => {
   if (selectedContact) socket.emit('join-room', { peerId: selectedContact.id, selectionToken: chatSelectionToken });
 });
+socket.on('presence-state', ({ userId, online, status }) => {
+  if (!userId) return;
+  presenceMap.set(userId, Boolean(online));
+  if (selectedContact && selectedContact.id === userId) {
+    const label = online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+    document.getElementById('chatContactStatus').textContent = label;
+    selectedContact.online = Boolean(online);
+    selectedContact.status = status || (online ? 'online' : 'offline');
+  }
+  loadConversations().catch(() => {});
+  if (contactsModal.classList.contains('visible')) openContacts(document.getElementById('contactsSearchInput')?.value || '').catch(() => {});
+});
 socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
   document.getElementById('chatContactStatus').textContent = participantCount > 1 ? 'ออนไลน์อยู่' : 'ออฟไลน์';
@@ -511,8 +536,15 @@ socket.on('message-reaction', ({ messageId, reactions }) => {
 messageInput.addEventListener('input', () => {
   if (!socket.connected || !selectedContact) return;
   socket.emit('typing', { active: true });
+  const statusEl = document.getElementById('chatContactStatus');
+  if (statusEl) statusEl.textContent = 'กำลังพิมพ์...';
   clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => socket.emit('typing', { active: false }), 900);
+  typingTimer = setTimeout(() => {
+    socket.emit('typing', { active: false });
+    if (selectedContact) {
+      document.getElementById('chatContactStatus').textContent = selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+    }
+  }, 900);
 });
 
 async function uploadAttachment(file) {
@@ -535,6 +567,9 @@ document.getElementById('heartButton').addEventListener('click', () => {
 socket.on('chat-message', (message) => {
   socket.emit('typing', { active: false });
   renderMessage(message);
+  if (selectedContact && message.senderId === selectedContact.id && socket.connected) {
+    socket.emit('read-conversation', { peerId: selectedContact.id });
+  }
   loadConversations().catch(() => {});
   if (message.senderId !== currentUser?.id && (!selectedContact || message.senderId !== selectedContact.id)) notifyIncomingMessage(message);
 });
@@ -552,6 +587,21 @@ socket.on('message-deleted', ({ messageId }) => {
 socket.on('typing', ({ active, username }) => {
   if (!selectedContact) return;
   document.getElementById('chatContactStatus').textContent = active ? `${username} กำลังพิมพ์...` : (selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์');
+  const statusEl = document.getElementById('chatContactStatus');
+  statusEl.classList.toggle('typing', Boolean(active));
+});
+
+socket.on('messages-read', ({ roomId, readerId, readAt }) => {
+  if (!roomId || !selectedContact || roomId !== activeRoomId || readerId !== selectedContact.id) return;
+  document.querySelectorAll('.message-row.mine').forEach((row) => {
+    const timestamp = row.dataset.timestamp;
+    const messageId = row.dataset.messageId;
+    if (!timestamp || !messageId) return;
+    row.dataset.readAt = readAt;
+    const meta = row.querySelector('.message-meta');
+    if (meta) meta.textContent = formatMessageMeta(timestamp, true, readAt, false);
+  });
+  showToast('ข้อความถูกอ่านแล้ว');
 });
 
 function notifyIncomingMessage(message) {
@@ -605,6 +655,7 @@ async function startCall(mode) {
 socket.on('incoming-call', async ({ callerId, callId, callerName, mode }) => {
   if (peerConnection) return;
   activePeerId = callerId;
+  activeCallId = callId;
   activeCallMode = mode;
   isCaller = false;
   pendingIncomingCall = { callerId, callId, callerName, mode };
@@ -635,24 +686,29 @@ function rejectIncomingCall() {
 }
 
 // The caller creates an SDP offer after the callee has accepted the call.
-socket.on('call-accepted', async ({ senderId }) => {
+socket.on('call-started', ({ callId }) => { activeCallId = callId; });
+
+socket.on('call-accepted', async ({ senderId, callId }) => {
   activePeerId = senderId;
+  activeCallId = callId;
   reconnectAttempts = 0;
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
-  socket.emit('webrtc-offer', { targetId: senderId, description: peerConnection.localDescription });
+  socket.emit('webrtc-offer', { targetId: senderId, callId, description: peerConnection.localDescription });
 });
 
-socket.on('webrtc-offer', async ({ senderId, description }) => {
+socket.on('webrtc-offer', async ({ senderId, callId, description }) => {
   activePeerId = senderId;
+  activeCallId = callId;
   await setRemoteDescription(description);
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
-  socket.emit('webrtc-answer', { targetId: senderId, description: peerConnection.localDescription });
+  socket.emit('webrtc-answer', { targetId: senderId, callId, description: peerConnection.localDescription });
   updateCallStatus('Connected');
 });
 
-socket.on('webrtc-answer', async ({ description }) => {
+socket.on('webrtc-answer', async ({ callId, description }) => {
+  if (callId !== activeCallId) return;
   await setRemoteDescription(description);
   updateCallStatus('Connected');
 });
@@ -668,7 +724,8 @@ socket.on('call-busy', () => {
 
 // ICE candidates describe reachable network paths. STUN helps peers discover
 // public addresses; the media packets then flow directly over UDP when possible.
-socket.on('ice-candidate', async ({ candidate }) => {
+socket.on('ice-candidate', async ({ callId, candidate }) => {
+  if (callId !== activeCallId) return;
   if (!peerConnection || !candidate) return;
   if (!peerConnection.remoteDescription) {
     pendingIceCandidates.push(candidate);
@@ -682,12 +739,17 @@ socket.on('call-ended', () => {
   showToast('Call ended');
 });
 
+socket.on('conversation-revoked', () => {
+  endCall(false);
+  showToast('สิทธิ์เข้าถึงบทสนทนาถูกยกเลิก');
+});
+
 function createPeerConnection() {
   pendingIceCandidates = [];
   peerConnection = new RTCPeerConnection(rtcConfiguration);
   localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
   peerConnection.onicecandidate = ({ candidate }) => {
-    if (candidate && activePeerId) socket.emit('ice-candidate', { targetId: activePeerId, candidate });
+    if (candidate && activePeerId && activeCallId) socket.emit('ice-candidate', { targetId: activePeerId, callId: activeCallId, candidate });
   };
   peerConnection.ontrack = ({ streams }) => {
     remoteVideo.srcObject = streams[0];
@@ -701,7 +763,7 @@ function createPeerConnection() {
       updateCallStatus('Reconnecting...');
       peerConnection.createOffer({ iceRestart: true }).then(async (offer) => {
         await peerConnection.setLocalDescription(offer);
-        socket.emit('webrtc-offer', { targetId: activePeerId, description: peerConnection.localDescription });
+        socket.emit('webrtc-offer', { targetId: activePeerId, callId: activeCallId, description: peerConnection.localDescription });
       }).catch(() => updateCallStatus('Connection interrupted'));
     } else if (['failed', 'disconnected'].includes(peerConnection.connectionState)) updateCallStatus('Connection interrupted');
   };
@@ -756,12 +818,28 @@ function attachLongPress(target, onLongPress) {
   });
 }
 
+function formatMessageMeta(timestamp, isMine, readAt, deleted) {
+  const base = formatTime(timestamp);
+  if (!isMine || deleted) return base;
+  return `${base} • ${readAt ? 'อ่านแล้ว' : 'ส่งแล้ว'}`;
+}
+
+function applyReadStatus(row, message) {
+  const meta = row.querySelector('.message-meta');
+  if (!meta) return;
+  const isMine = message.senderId === currentUser?.id;
+  if (!isMine) return;
+  meta.textContent = formatMessageMeta(message.timestamp, true, message.readAt || message.read_at || row.dataset.readAt, Boolean(message.deleted));
+}
+
 function renderMessage(message) {
   const isMine = message.senderId === currentUser?.id;
   if (!selectedContact) return;
   const row = document.createElement('div');
   row.className = `message-row${isMine ? ' mine' : ''}`;
   row.dataset.messageId = message.id;
+  row.dataset.timestamp = message.timestamp;
+  row.dataset.readAt = message.readAt || message.read_at || '';
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
@@ -790,7 +868,7 @@ function renderMessage(message) {
   }
   const meta = document.createElement('time');
   meta.className = 'message-meta';
-  meta.textContent = formatTime(message.timestamp);
+  meta.textContent = formatMessageMeta(message.timestamp, isMine, message.readAt || message.read_at || row.dataset.readAt, Boolean(message.deleted));
   row.append(bubble, meta);
   if (message.reactionJson) renderReactions(row, message.reactionJson);
   if (isMine && !message.deleted) {
@@ -883,15 +961,35 @@ function formatTime(timestamp) {
   return new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', hour: 'numeric', minute: '2-digit' }).format(new Date(value));
 }
 function openCallModal(title, status) { const contactName = selectedContact?.username || 'เพื่อน'; callTitle.textContent = contactName; callStatus.textContent = title; voiceStatus.textContent = status; callModal.classList.add('visible'); callModal.setAttribute('aria-hidden', 'false'); }
-function updateCallStatus(status) { callStatus.textContent = status; voiceStatus.textContent = status; }
+function setCallQualityState(level, labelText) {
+  const qualityEl = document.getElementById('callQuality');
+  const label = document.getElementById('callQualityLabel');
+  if (!qualityEl || !label) return;
+  qualityEl.className = `call-quality ${level}`;
+  label.textContent = labelText || 'เครือข่ายคงที่';
+}
+
+function updateCallStatus(status) {
+  callStatus.textContent = status;
+  voiceStatus.textContent = status;
+  if (!peerConnection) {
+    setCallQualityState('good', 'เครือข่ายคงที่');
+    return;
+  }
+  const connectionState = peerConnection.iceConnectionState || peerConnection.connectionState || 'connected';
+  if (['connected', 'completed'].includes(connectionState)) setCallQualityState('good', 'เครือข่ายคงที่');
+  else if (['checking', 'new'].includes(connectionState)) setCallQualityState('fair', 'กำลังตรวจสอบเครือข่าย');
+  else if (['failed', 'disconnected'].includes(connectionState)) setCallQualityState('disconnected', 'การเชื่อมต่อขาดหาย');
+  else setCallQualityState('weak', 'เครือข่ายอ่อน');
+}
 function showLocalMedia() { localVideo.srcObject = localStream; localVideo.classList.toggle('hidden', activeCallMode !== 'video'); remoteVideo.classList.toggle('hidden', activeCallMode !== 'video'); voicePlaceholder.classList.toggle('hidden', activeCallMode === 'video'); }
 
 function endCall(notifyPeer) {
-  if (notifyPeer && socket.connected) socket.emit('end-call');
+  if (notifyPeer && socket.connected) socket.emit('end-call', { callId: activeCallId });
   if (peerConnection) peerConnection.close();
   if (localStream) localStream.getTracks().forEach((track) => track.stop());
   if (screenStream) screenStream.getTracks().forEach((track) => track.stop());
-  peerConnection = null; localStream = null; activePeerId = null; isCaller = false; pendingIceCandidates = [];
+  peerConnection = null; localStream = null; activePeerId = null; activeCallId = null; isCaller = false; pendingIceCandidates = [];
   screenStream = null;
   pendingIncomingCall = null; acceptCallButton.classList.remove('visible'); rejectCallButton.classList.remove('visible');
   remoteVideo.srcObject = null; localVideo.srcObject = null;
