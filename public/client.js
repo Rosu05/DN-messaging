@@ -45,6 +45,9 @@ const groupDetailsModal = document.getElementById('groupDetailsModal');
 const groupDetailsMembers = document.getElementById('groupDetailsMembers');
 const groupDetailsMeta = document.getElementById('groupDetailsMeta');
 const groupDetailsError = document.getElementById('groupDetailsError');
+const groupOwnerControls = document.getElementById('groupOwnerControls');
+const groupRenameInput = document.getElementById('groupRenameInput');
+const groupOwnerSelect = document.getElementById('groupOwnerSelect');
 const editModal = document.getElementById('editModal');
 const editForm = document.getElementById('editForm');
 const editModalTitle = document.getElementById('editModalTitle');
@@ -403,6 +406,9 @@ document.getElementById('groupDetailsClose').addEventListener('click', closeGrou
 groupDetailsModal.addEventListener('click', (event) => { if (event.target === groupDetailsModal) closeGroupDetails(); });
 document.getElementById('groupAddMembersButton').addEventListener('click', () => openGroupModal('invite'));
 document.getElementById('groupLeaveButton').addEventListener('click', leaveActiveGroup);
+document.getElementById('groupRenameButton').addEventListener('click', renameActiveGroup);
+document.getElementById('groupTransferButton').addEventListener('click', transferGroupOwnership);
+document.getElementById('groupDeleteButton').addEventListener('click', deleteActiveGroup);
 homeButton.addEventListener('click', goToHome);
 document.getElementById('mobileBackButton').addEventListener('click', () => {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
@@ -619,10 +625,58 @@ async function openGroupDetails() {
   document.getElementById('groupAddMembersButton').hidden = Boolean(group.ownerId && !group.isOwner);
   document.getElementById('groupLeaveButton').hidden = group.isOwner;
   document.getElementById('groupLeaveButton').textContent = 'ออกจากกลุ่ม';
+  groupOwnerControls.hidden = !group.isOwner || group.id === 'group:main';
+  groupRenameInput.value = group.name;
+  groupOwnerSelect.innerHTML = group.members.filter((member) => member.id !== currentUser?.id).map((member) => `<option value="${member.id}">${escapeHtml(member.username)}</option>`).join('');
   groupDetailsMembers.innerHTML = group.members.map((member) => `<div class="person-row">${avatarMarkup(member, 'person-avatar')}<span class="person-copy"><strong>${escapeHtml(member.username)}${member.id === group.ownerId ? ' (เจ้าของ)' : ''}</strong><small>${member.id === currentUser?.id ? 'คุณ' : 'สมาชิกกลุ่ม'}</small></span>${group.isOwner && member.id !== group.ownerId ? `<button class="contact-action remove" data-remove-group-member="${member.id}" title="ลบสมาชิก" aria-label="ลบสมาชิก"><i class="fa-solid fa-user-minus"></i></button>` : ''}</div>`).join('');
   groupDetailsMembers.querySelectorAll('[data-remove-group-member]').forEach((button) => button.addEventListener('click', () => removeGroupMember(button.dataset.removeGroupMember)));
   groupDetailsModal.classList.add('visible');
   groupDetailsModal.setAttribute('aria-hidden', 'false');
+}
+
+async function renameActiveGroup() {
+  const name = groupRenameInput.value.trim();
+  const response = await fetch(`/api/groups/${encodeURIComponent(activeGroupId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'เปลี่ยนชื่อกลุ่มไม่สำเร็จ');
+  selectedContact.name = name;
+  document.getElementById('chatContactName').textContent = name;
+  await loadConversations();
+  showToast('เปลี่ยนชื่อกลุ่มแล้ว');
+}
+
+async function transferGroupOwnership() {
+  const newOwnerId = groupOwnerSelect.value;
+  if (!newOwnerId) return showToast('เลือกสมาชิกที่จะเป็นเจ้าของใหม่');
+  showConfirmModal({
+    title: 'โอนสิทธิ์เจ้าของกลุ่มไหม?',
+    description: 'หลังจากโอนแล้ว คุณจะไม่สามารถเปลี่ยนชื่อหรือลบกลุ่มได้',
+    confirmText: 'โอนสิทธิ์',
+    onConfirm: async () => {
+      const response = await fetch(`/api/groups/${encodeURIComponent(activeGroupId)}/transfer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newOwnerId }) });
+      const result = await response.json();
+      if (!response.ok) return showToast(result.error || 'โอนสิทธิ์ไม่สำเร็จ');
+      selectedContact.ownerId = newOwnerId;
+      await openGroupDetails();
+      showToast('โอนสิทธิ์เจ้าของแล้ว');
+    }
+  });
+}
+
+async function deleteActiveGroup() {
+  showConfirmModal({
+    title: 'ลบกลุ่มถาวรไหม?',
+    description: 'ข้อความ สมาชิก และคำเชิญของกลุ่มนี้จะถูกลบทั้งหมดและกู้คืนไม่ได้',
+    confirmText: 'ลบกลุ่ม',
+    onConfirm: async () => {
+      const response = await fetch(`/api/groups/${encodeURIComponent(activeGroupId)}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (!response.ok) return showToast(result.error || 'ลบกลุ่มไม่สำเร็จ');
+      goToHome();
+      loadConversations().catch(() => {});
+      showToast('ลบกลุ่มแล้ว');
+    }
+  });
 }
 
 function closeGroupDetails() {
@@ -761,7 +815,7 @@ function selectContact(contact) { selectConversation(contact); }
 function clearChatArea() {
   oldestMessageTimestamp = null;
   replyToMessageId = null;
-  chatArea.innerHTML = '<button type="button" class="load-older" id="loadOlderMessages" hidden>โหลดข้อความเก่า</button><div class="date-divider"><span>Today</span></div>';
+  chatArea.innerHTML = '<button type="button" class="load-older" id="loadOlderMessages" hidden>โหลดข้อความเก่า</button><div class="date-divider"><span>Today</span></div><div class="chat-loading" id="chatLoading"><span class="loading-spinner"></span><span>กำลังโหลดข้อความ...</span></div>';
   document.getElementById('loadOlderMessages').addEventListener('click', loadOlderMessages);
 }
 
@@ -900,6 +954,7 @@ socket.on('room-joined', ({ participantCount }) => {
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
 socket.on('chat-history', ({ messages, selectionToken }) => {
   if (selectionToken !== chatSelectionToken) return;
+  document.getElementById('chatLoading')?.remove();
   oldestMessageTimestamp = messages[0]?.timestamp || null;
   const loadOlderButton = document.getElementById('loadOlderMessages');
   if (loadOlderButton) loadOlderButton.hidden = messages.length < 200;
@@ -908,11 +963,26 @@ socket.on('chat-history', ({ messages, selectionToken }) => {
     try { attachment = message.attachmentJson ? JSON.parse(message.attachmentJson) : null; } catch (_error) {}
     renderMessage({ ...message, attachment, deleted: Boolean(message.deletedAt), edited: Boolean(message.editedAt) });
   });
+  if (!messages.length) chatArea.insertAdjacentHTML('beforeend', '<div class="chat-empty">ยังไม่มีข้อความ เริ่มการสนทนาได้เลย</div>');
 });
 socket.on('chat-error', ({ message }) => showToast(message));
 socket.on('group-membership-revoked', () => {
   goToHome();
   showToast('คุณถูกนำออกจากกลุ่มแล้ว');
+});
+socket.on('group-deleted', () => {
+  goToHome();
+  loadConversations().catch(() => {});
+  showToast('กลุ่มถูกลบแล้ว');
+});
+socket.on('group-updated', ({ groupId, name, ownerId }) => {
+  if (!selectedContact?.isGroup || selectedContact.id !== groupId) return;
+  if (name) {
+    selectedContact.name = name;
+    document.getElementById('chatContactName').textContent = name;
+  }
+  if (ownerId) selectedContact.ownerId = ownerId;
+  loadConversations().catch(() => {});
 });
 socket.on('peer-left', () => { if (callModal.classList.contains('visible')) endCall(false); });
 
@@ -973,7 +1043,6 @@ document.querySelectorAll('#emojiPicker [data-emoji]').forEach((button) => {
     if (messageInput.value.trim()) messageInput.value += ' ';
     messageInput.value += emoji;
     messageInput.focus();
-    socket.emit('chat-message', { text: emoji });
     document.getElementById('emojiPicker').classList.remove('visible');
     emojiPickerOpen = false;
   });
@@ -1285,6 +1354,12 @@ function renderMessage(message) {
   const bubble = document.createElement('div');
   bubble.className = `message-bubble${isSystem ? ' system-bubble' : ''}`;
   bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
+  if (selectedContact.isGroup && !isSystem && !isMine && message.senderName) {
+    const senderLabel = document.createElement('small');
+    senderLabel.className = 'message-sender';
+    senderLabel.textContent = message.senderName;
+    bubble.prepend(senderLabel, document.createElement('br'));
+  }
   if (message.replyTo) {
     const replyLabel = document.createElement('small');
     replyLabel.className = 'message-reply';

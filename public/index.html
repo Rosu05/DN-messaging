@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Direct | Networking Lab</title>
+  <title>Outstagram</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -46,8 +46,8 @@
 <body>
   <section class="auth-screen visible" id="authScreen" aria-labelledby="authTitle">
     <div class="auth-card">
-      <div class="auth-mark">D</div>
-      <span class="eyebrow">Data Networking</span>
+      <div class="auth-mark">O</div>
+      <span class="eyebrow">Outstagram</span>
       <h1 id="authTitle">Welcome</h1>
       <p class="auth-subtitle" id="authSubtitle">Sign in to continue to your messages.</p>
       <form id="authForm" class="auth-form">
@@ -64,7 +64,7 @@
 
   <main class="app-shell" id="appShell">
     <aside class="brand-rail" aria-label="Application navigation">
-      <button class="brand-mark" id="homeButton" type="button" title="กลับหน้าหลัก" aria-label="กลับหน้าหลัก">D</button>
+      <button class="brand-mark" id="homeButton" type="button" title="กลับหน้าหลัก" aria-label="กลับหน้าหลัก">O</button>
       <div class="rail-rule"></div>
       <button class="rail-button active" title="Messages" aria-label="Messages"><i class="fa-solid fa-message"></i></button>
       <button class="rail-button contacts-rail-button" id="contactsButton" title="Contacts" aria-label="Contacts"><i class="fa-solid fa-user-group"></i><span class="notification-badge" id="contactBadge" hidden>0</span></button>
@@ -75,7 +75,7 @@
     <section class="inbox-panel" aria-label="Conversations">
       <div class="mobile-topbar"><strong id="mobileUsername">Messages</strong><button class="mobile-compose" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button></div>
       <div class="inbox-heading">
-        <div><span class="eyebrow">Data Networking</span><h1>Messages</h1><span class="current-user" id="currentUser"></span></div>
+        <div><span class="eyebrow">Outstagram</span><h1>Messages</h1><span class="current-user" id="currentUser"></span></div>
         <button class="icon-button subtle" id="desktopComposeButton" title="New message" aria-label="New message"><i class="fa-solid fa-pen-to-square"></i></button>
       </div>
       <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" placeholder="Search" aria-label="Search conversations"></label>
@@ -149,7 +149,7 @@
   <div class="group-details-modal" id="groupDetailsModal" aria-hidden="true">
     <section class="group-details-sheet" role="dialog" aria-modal="true" aria-labelledby="groupDetailsTitle">
       <header class="contacts-header"><div><span class="eyebrow">Group details</span><h2 id="groupDetailsTitle">ข้อมูลกลุ่ม</h2><small id="groupDetailsMeta"></small></div><button type="button" class="settings-close" id="groupDetailsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
-      <div class="group-details-content"><div class="group-details-actions"><button type="button" class="edit-submit" id="groupAddMembersButton"><i class="fa-solid fa-user-plus"></i> เพิ่มสมาชิก</button><button type="button" class="edit-cancel" id="groupLeaveButton">ออกจากกลุ่ม</button></div><h3>สมาชิก</h3><div id="groupDetailsMembers" class="people-list"></div><p class="group-error" id="groupDetailsError" role="alert"></p></div>
+      <div class="group-details-content"><div class="group-details-actions"><button type="button" class="edit-submit" id="groupAddMembersButton"><i class="fa-solid fa-user-plus"></i> เพิ่มสมาชิก</button><button type="button" class="edit-cancel" id="groupLeaveButton">ออกจากกลุ่ม</button></div><div class="group-owner-controls" id="groupOwnerControls" hidden><label>ชื่อกลุ่ม<input id="groupRenameInput" maxlength="60"><button type="button" class="edit-submit" id="groupRenameButton">บันทึกชื่อ</button></label><label>โอนเจ้าของกลุ่ม<select id="groupOwnerSelect"></select><button type="button" class="edit-cancel" id="groupTransferButton">โอนสิทธิ์</button></label><button type="button" class="group-delete-button" id="groupDeleteButton">ลบกลุ่มถาวร</button></div><h3>สมาชิก</h3><div id="groupDetailsMembers" class="people-list"></div><p class="group-error" id="groupDetailsError" role="alert"></p></div>
     </section>
   </div>
 
@@ -217,6 +217,6 @@
   </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/client.js?v=20261002"></script>
+  <script src="/client.js?v=20261004"></script>
 </body>
 </html>

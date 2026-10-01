@@ -422,6 +422,69 @@ app.post('/api/groups/:groupId/members', async (request, response) => {
   }
 });
 
+app.patch('/api/groups/:groupId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  const name = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (groupId === 'group:main') return response.status(403).json({ error: 'กลุ่มหลักไม่สามารถเปลี่ยนชื่อได้' });
+  if (name.length < 2 || name.length > 60) return response.status(400).json({ error: 'Group name must be 2-60 characters' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length || group.rows[0].ownerId !== userId) return response.status(403).json({ error: 'Only the group owner can rename the group' });
+    await db.execute({ sql: 'UPDATE rooms SET name = ? WHERE id = ?', args: [name, groupId] });
+    const systemMessage = await createSystemMessage(groupId, userId, `เปลี่ยนชื่อกลุ่มเป็น ${name}`);
+    io.to(groupId).emit('chat-message', systemMessage);
+    io.to(groupId).emit('group-updated', { groupId, name });
+    response.json({ group: { id: groupId, name, isGroup: true } });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not rename group' });
+  }
+});
+
+app.post('/api/groups/:groupId/transfer', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  const newOwnerId = typeof request.body?.newOwnerId === 'string' ? request.body.newOwnerId : '';
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (groupId === 'group:main') return response.status(403).json({ error: 'กลุ่มหลักไม่สามารถโอนเจ้าของได้' });
+  if (!newOwnerId || newOwnerId === userId) return response.status(400).json({ error: 'Choose another member as owner' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length || group.rows[0].ownerId !== userId) return response.status(403).json({ error: 'Only the group owner can transfer ownership' });
+    const member = await db.execute({ sql: 'SELECT username FROM users u INNER JOIN room_members rm ON rm.user_id = u.id WHERE rm.room_id = ? AND u.id = ?', args: [groupId, newOwnerId] });
+    if (!member.rows.length) return response.status(400).json({ error: 'New owner must already be a group member' });
+    await db.execute({ sql: 'UPDATE rooms SET owner_id = ? WHERE id = ?', args: [newOwnerId, groupId] });
+    const systemMessage = await createSystemMessage(groupId, userId, `โอนสิทธิ์เจ้าของกลุ่มให้ ${member.rows[0].username}`);
+    io.to(groupId).emit('chat-message', systemMessage);
+    io.to(groupId).emit('group-updated', { groupId, ownerId: newOwnerId });
+    response.json({ transferred: true, ownerId: newOwnerId });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not transfer group ownership' });
+  }
+});
+
+app.delete('/api/groups/:groupId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (groupId === 'group:main') return response.status(403).json({ error: 'กลุ่มหลักไม่สามารถลบได้' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length || group.rows[0].ownerId !== userId) return response.status(403).json({ error: 'Only the group owner can delete the group' });
+    const sockets = await io.in(groupId).fetchSockets();
+    await db.execute({ sql: 'DELETE FROM rooms WHERE id = ?', args: [groupId] });
+    sockets.forEach((candidate) => {
+      candidate.emit('group-deleted');
+      candidate.leave(groupId);
+      if (candidate.data.roomId === groupId) candidate.data.roomId = null;
+    });
+    response.json({ deleted: true });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not delete group' });
+  }
+});
+
 app.delete('/api/groups/:groupId/members/:memberId', async (request, response) => {
   const userId = authenticatedUserId(request);
   const groupId = request.params.groupId;
