@@ -340,9 +340,9 @@ async function openContacts(query = '') {
     renderFriendNotes(result.friends);
     renderInboxNotes(result.friends);
     renderFriendRequests(result.requests);
-    await loadGroupInvites();
+    const groupInviteCount = await loadGroupInvites();
     await loadBlockedUsers();
-    setContactBadge(result.requestCount);
+    setContactBadge(result.requestCount, groupInviteCount);
   } catch (_error) {
     document.getElementById('friendsList').innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
   }
@@ -352,12 +352,13 @@ async function loadGroupInvites() {
   const section = document.getElementById('groupInvitesSection');
   const list = document.getElementById('groupInvitesList');
   const response = await fetch('/api/group-invites');
-  if (!response.ok) return;
+  if (!response.ok) return 0;
   const { invites } = await response.json();
   section.hidden = !invites.length;
   document.getElementById('groupInviteCount').textContent = invites.length ? `(${invites.length})` : '';
   list.innerHTML = invites.map((invite) => `<div class="request-row group-invite-row"><span class="person-avatar">G</span><span class="person-copy"><strong>${escapeHtml(invite.name)}</strong><small>เชิญโดย ${escapeHtml(invite.inviterName)}</small></span><button class="request-action accept" data-group-response="accept" data-group-id="${invite.id}">เข้าร่วม</button><button class="request-action decline" data-group-response="decline" data-group-id="${invite.id}">ปฏิเสธ</button></div>`).join('');
   list.querySelectorAll('[data-group-response]').forEach((button) => button.addEventListener('click', () => respondToGroupInvite(button.dataset.groupId, button.dataset.groupResponse === 'accept')));
+  return invites.length;
 }
 
 async function respondToGroupInvite(groupId, accepted) {
@@ -383,18 +384,22 @@ async function loadBlockedUsers() {
 
 async function refreshFriendRequestBadge() {
   try {
-    const response = await fetch('/api/contacts');
-    if (response.ok) setContactBadge((await response.json()).requestCount);
+    const [contactsResponse, groupsResponse] = await Promise.all([fetch('/api/contacts'), fetch('/api/group-invites')]);
+    if (!contactsResponse.ok) return;
+    const contacts = await contactsResponse.json();
+    const groupInvites = groupsResponse.ok ? await groupsResponse.json() : { invites: [] };
+    setContactBadge(contacts.requestCount, groupInvites.invites.length);
   } catch (_error) {
     // The contacts screen will show the full error state when opened.
   }
 }
 
-function setContactBadge(count) {
+function setContactBadge(count, groupInviteCount = 0) {
+  const totalCount = count + groupInviteCount;
   const badge = document.getElementById('contactBadge');
   const tabBadge = document.getElementById('requestsTabBadge');
-  badge.textContent = count;
-  badge.hidden = !count;
+  badge.textContent = totalCount;
+  badge.hidden = !totalCount;
   tabBadge.textContent = count;
   tabBadge.hidden = !count;
   const mobileBadge = document.getElementById('mobileNavBadge');
