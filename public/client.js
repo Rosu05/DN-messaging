@@ -79,12 +79,9 @@ document.addEventListener('click', (event) => {
   if (Date.now() < longPressGuardUntil) return;
   if (!event.target.closest('.message-tools')) document.querySelectorAll('.message-tools.open').forEach((item) => item.classList.remove('open'));
 });
-cancelDeleteButton.addEventListener('click', closeDeleteConfirm);
+
 deleteConfirmModal.addEventListener('click', (event) => { if (event.target === deleteConfirmModal) closeDeleteConfirm(); });
-confirmDeleteButton.addEventListener('click', () => {
-  if (pendingDeleteMessageId && socket.connected) socket.emit('delete-message', { messageId: pendingDeleteMessageId });
-  closeDeleteConfirm();
-});
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && deleteConfirmModal.classList.contains('visible')) closeDeleteConfirm();
 });
@@ -106,7 +103,42 @@ let replyToMessageId = null;
 let oldestMessageTimestamp = null;
 let searchRequestId = 0;
 let pendingDeleteMessageId = null;
+let emojiPickerOpen = false;
+let pendingConfirmationAction = null;
 const presenceMap = new Map();
+
+function showConfirmModal({ title, description, confirmText, onConfirm, cancelText = 'ยกเลิก' }) {
+  const titleEl = document.getElementById('deleteConfirmTitle');
+  const descriptionEl = document.getElementById('deleteConfirmDescription');
+  const confirmButton = document.getElementById('confirmDeleteButton');
+  const cancelButton = document.getElementById('cancelDeleteButton');
+
+  titleEl.textContent = title;
+  descriptionEl.textContent = description;
+  confirmButton.textContent = confirmText || 'ยืนยัน';
+  cancelButton.textContent = cancelText;
+  pendingConfirmationAction = onConfirm || null;
+  deleteConfirmModal.classList.add('visible');
+  deleteConfirmModal.setAttribute('aria-hidden', 'false');
+  confirmButton.focus();
+}
+
+function closeConfirmModal() {
+  pendingDeleteMessageId = null;
+  pendingConfirmationAction = null;
+  deleteConfirmModal.classList.remove('visible');
+  deleteConfirmModal.setAttribute('aria-hidden', 'true');
+}
+
+confirmDeleteButton.addEventListener('click', () => {
+  if (pendingConfirmationAction) {
+    const callback = pendingConfirmationAction;
+    pendingConfirmationAction = null;
+    callback();
+  }
+  closeConfirmModal();
+});
+cancelDeleteButton.addEventListener('click', closeConfirmModal);
 
 authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -299,7 +331,7 @@ function goToHome() {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
   document.getElementById('chatAvatar').textContent = '?';
   document.getElementById('chatContactName').textContent = 'เลือกเพื่อน';
-  document.getElementById('chatContactStatus').textContent = 'พร้อมเริ่มการสนทนา';
+  updateChatStatusText('พร้อมเริ่มการสนทนา', false);
   chatArea.innerHTML = '<div class="date-divider"><span>วันนี้</span></div><div class="welcome-card"><div class="welcome-orb"><i class="fa-solid fa-bolt"></i></div><h3>Start the conversation</h3><p>Messages travel over a persistent TCP connection powered by Socket.io.</p></div>';
 }
 
@@ -333,17 +365,25 @@ function renderPeople(elementId, people, showAddButton) {
 }
 
 async function updateContact(friendId, action) {
-  const confirmed = window.confirm(action === 'block' ? 'บล็อกผู้ใช้นี้ใช่ไหม' : 'ลบเพื่อนคนนี้ใช่ไหม');
-  if (!confirmed) return;
-  const response = await fetch(`/api/contacts/${friendId}${action === 'block' ? '/block' : ''}`, { method: action === 'block' ? 'POST' : 'DELETE' });
-  if (!response.ok) return showToast('ดำเนินการไม่สำเร็จ');
-  if (selectedContact?.id === friendId) {
-    selectedContact = null;
-    document.getElementById('appShell').classList.remove('mobile-chat-open');
-  }
-  showToast(action === 'block' ? 'บล็อกผู้ใช้แล้ว' : 'ลบเพื่อนแล้ว');
-  openContacts();
-  loadConversations().catch(() => {});
+  const isBlock = action === 'block';
+  showConfirmModal({
+    title: isBlock ? 'บล็อกผู้ใช้นี้ไหม?' : 'ลบเพื่อนคนนี้ไหม?',
+    description: isBlock
+      ? 'เมื่อบล็อกแล้ว คุณจะไม่เห็นข้อความจากผู้ใช้นี้อีก และระบบจะยกเลิกการสนทนากับเพื่อนคนนี้ทันที'
+      : 'การลบเพื่อนจะยกเลิกความสัมพันธ์และปิดการสนทนาระหว่างคุณกับเพื่อนคนนี้',
+    confirmText: isBlock ? 'บล็อก' : 'ลบเพื่อน',
+    onConfirm: async () => {
+      const response = await fetch(`/api/contacts/${friendId}${isBlock ? '/block' : ''}`, { method: isBlock ? 'POST' : 'DELETE' });
+      if (!response.ok) return showToast('ดำเนินการไม่สำเร็จ');
+      if (selectedContact?.id === friendId) {
+        selectedContact = null;
+        document.getElementById('appShell').classList.remove('mobile-chat-open');
+      }
+      showToast(isBlock ? 'บล็อกผู้ใช้แล้ว' : 'ลบเพื่อนแล้ว');
+      openContacts();
+      loadConversations().catch(() => {});
+    }
+  });
 }
 
 function renderFriendNotes(friends) {
@@ -384,7 +424,7 @@ function selectContact(contact) {
   selectedContact = contact;
   document.getElementById('chatAvatar').textContent = contact.username.slice(0, 2).toUpperCase();
   document.getElementById('chatContactName').textContent = contact.username;
-  document.getElementById('chatContactStatus').textContent = contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+  updateChatStatusText(contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์', false);
   clearChatArea();
   closeContacts();
   document.getElementById('appShell').classList.add('mobile-chat-open');
@@ -536,13 +576,12 @@ socket.on('message-reaction', ({ messageId, reactions }) => {
 messageInput.addEventListener('input', () => {
   if (!socket.connected || !selectedContact) return;
   socket.emit('typing', { active: true });
-  const statusEl = document.getElementById('chatContactStatus');
-  if (statusEl) statusEl.textContent = 'กำลังพิมพ์...';
+  updateChatStatusText('กำลังพิมพ์...', true);
   clearTimeout(typingTimer);
   typingTimer = setTimeout(() => {
     socket.emit('typing', { active: false });
     if (selectedContact) {
-      document.getElementById('chatContactStatus').textContent = selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+      updateChatStatusText(selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์', false);
     }
   }, 900);
 });
@@ -562,6 +601,32 @@ async function uploadAttachment(file) {
 
 document.getElementById('heartButton').addEventListener('click', () => {
   if (socket.connected && selectedContact) socket.emit('chat-message', { text: '❤️' });
+});
+
+document.getElementById('emojiButton').addEventListener('click', () => {
+  emojiPickerOpen = !emojiPickerOpen;
+  document.getElementById('emojiPicker').classList.toggle('visible', emojiPickerOpen);
+});
+
+document.querySelectorAll('#emojiPicker [data-emoji]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const emoji = button.dataset.emoji;
+    if (!socket.connected || !selectedContact) return;
+    if (messageInput.value.trim()) messageInput.value += ' ';
+    messageInput.value += emoji;
+    messageInput.focus();
+    socket.emit('chat-message', { text: emoji });
+    document.getElementById('emojiPicker').classList.remove('visible');
+    emojiPickerOpen = false;
+  });
+});
+
+document.addEventListener('click', (event) => {
+  const emojiPicker = document.getElementById('emojiPicker');
+  if (!event.target.closest('#emojiButton') && !event.target.closest('#emojiPicker')) {
+    emojiPicker.classList.remove('visible');
+    emojiPickerOpen = false;
+  }
 });
 
 socket.on('chat-message', (message) => {
@@ -584,11 +649,17 @@ socket.on('message-deleted', ({ messageId }) => {
   if (!row) return;
   row.remove();
 });
+function updateChatStatusText(text, typing = false) {
+  const statusEl = document.getElementById('chatContactStatus');
+  const statusText = document.getElementById('chatStatusText');
+  if (!statusEl || !statusText) return;
+  statusEl.classList.toggle('typing', typing);
+  statusText.textContent = text;
+}
+
 socket.on('typing', ({ active, username }) => {
   if (!selectedContact) return;
-  document.getElementById('chatContactStatus').textContent = active ? `${username} กำลังพิมพ์...` : (selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์');
-  const statusEl = document.getElementById('chatContactStatus');
-  statusEl.classList.toggle('typing', Boolean(active));
+  updateChatStatusText(active ? `${username} กำลังพิมพ์...` : (selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์'), Boolean(active));
 });
 
 socket.on('messages-read', ({ roomId, readerId, readAt }) => {
@@ -915,15 +986,18 @@ function renderMessage(message) {
 
 function openDeleteConfirm(messageId) {
   pendingDeleteMessageId = messageId;
-  deleteConfirmModal.classList.add('visible');
-  deleteConfirmModal.setAttribute('aria-hidden', 'false');
-  confirmDeleteButton.focus();
+  showConfirmModal({
+    title: 'ยกเลิกข้อความนี้ไหม?',
+    description: 'ข้อความนี้จะถูกลบออกจากการสนทนาสำหรับทุกคน แต่อาจมีคนเห็นไปแล้ว',
+    confirmText: 'ยืนยัน',
+    onConfirm: () => {
+      if (socket.connected) socket.emit('delete-message', { messageId });
+    }
+  });
 }
 
 function closeDeleteConfirm() {
-  pendingDeleteMessageId = null;
-  deleteConfirmModal.classList.remove('visible');
-  deleteConfirmModal.setAttribute('aria-hidden', 'true');
+  closeConfirmModal();
 }
 
 function renderReactions(row, reactions) {

@@ -154,12 +154,14 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .message-row:hover .message-reaction-button { opacity: 1; }
 .confirm-modal { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; padding: 18px; background: rgba(8, 10, 15, .68); backdrop-filter: blur(8px); }
 .confirm-modal.visible { display: grid; animation: fade-in .16s ease both; }
-.confirm-sheet { width: min(430px, 100%); overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; color: #f4f4f6; background: #22252b; box-shadow: 0 24px 70px rgba(0,0,0,.4); text-align: center; }
-.confirm-sheet h2 { margin: 28px 22px 8px; font: 600 19px 'Space Grotesk', sans-serif; }
-.confirm-sheet p { margin: 0 26px 26px; color: #aeb1b8; font-size: 12px; line-height: 1.45; }
-.confirm-actions { display: grid; border-top: 1px solid #383b42; }
-.confirm-actions button { min-height: 48px; color: #f4f4f6; background: transparent; font-size: 13px; font-weight: 600; }
-.confirm-actions button + button { border-top: 1px solid #383b42; }
-.confirm-actions .confirm-danger { color: #ff5570; }
-.confirm-actions button:hover { background: rgba(255,255,255,.06); }
+.confirm-sheet { width: min(420px, 100%); overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; color: #f4f4f6; background: linear-gradient(180deg, rgba(43,47,55,0.98), rgba(28,31,36,0.98)); box-shadow: 0 20px 60px rgba(0,0,0,.4); text-align: center; }
+.confirm-sheet h2 { margin: 28px 26px 10px; font: 700 22px 'Space Grotesk', sans-serif; }
+.confirm-sheet p { margin: 0 26px 24px; color: #bcc0ca; font-size: 13px; line-height: 1.55; }
+.confirm-actions { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.08); }
+.confirm-actions button { min-height: 52px; color: #f0f1f5; background: transparent; font-size: 14px; font-weight: 700; }
+.confirm-actions button + button { border-left: 1px solid rgba(255,255,255,.08); }
+.confirm-actions .confirm-danger { color: #ff5f7d; background: rgba(255, 95, 125, 0.04); }
+.confirm-actions .confirm-cancel { color: #eef0f4; }
+.confirm-actions button:hover { background: rgba(255,255,255,.04); }
+.confirm-actions .confirm-danger:hover { background: rgba(255, 95, 125, 0.08); }
 .app-shell { width: 100%; max-width: none; min-height: 100dvh; margin: 0; box-shadow: none; }
