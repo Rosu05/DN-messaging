@@ -88,7 +88,7 @@
     <section class="chat-panel">
       <header class="chat-header">
         <div class="contact-info"><button class="mobile-back-button" id="mobileBackButton" title="Back to messages" aria-label="Back to messages"><i class="fa-solid fa-arrow-left"></i></button><div class="avatar violet" id="chatAvatar">?</div><div><h2 id="chatContactName">เลือกเพื่อน</h2><p><span class="chat-status" id="chatContactStatus"><span class="status-dot"></span><span id="chatStatusText">พร้อมเริ่มการสนทนา</span></span></p></div></div>
-        <div class="header-actions"><button class="icon-button" id="audioCallButton" title="Start audio call" aria-label="Start audio call"><i class="fa-solid fa-phone"></i></button><button class="icon-button" id="videoCallButton" title="Start video call" aria-label="Start video call"><i class="fa-solid fa-video"></i></button></div>
+        <div class="header-actions"><button class="icon-button group-info-button" id="groupInfoButton" title="ข้อมูลกลุ่ม" aria-label="ข้อมูลกลุ่ม" hidden><i class="fa-solid fa-circle-info"></i></button><button class="icon-button" id="audioCallButton" title="Start audio call" aria-label="Start audio call"><i class="fa-solid fa-phone"></i></button><button class="icon-button" id="videoCallButton" title="Start video call" aria-label="Start video call"><i class="fa-solid fa-video"></i></button></div>
       </header>
 
       <div class="chat-area" id="chatArea" aria-live="polite">
@@ -143,6 +143,13 @@
         <p class="group-error" id="groupError" role="alert"></p>
         <div class="edit-actions"><button type="button" class="edit-cancel" id="groupCancel">ยกเลิก</button><button type="submit" class="edit-submit">สร้างกลุ่ม</button></div>
       </form>
+    </section>
+  </div>
+
+  <div class="group-details-modal" id="groupDetailsModal" aria-hidden="true">
+    <section class="group-details-sheet" role="dialog" aria-modal="true" aria-labelledby="groupDetailsTitle">
+      <header class="contacts-header"><div><span class="eyebrow">Group details</span><h2 id="groupDetailsTitle">ข้อมูลกลุ่ม</h2><small id="groupDetailsMeta"></small></div><button type="button" class="settings-close" id="groupDetailsClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
+      <div class="group-details-content"><div class="group-details-actions"><button type="button" class="edit-submit" id="groupAddMembersButton"><i class="fa-solid fa-user-plus"></i> เพิ่มสมาชิก</button><button type="button" class="edit-cancel" id="groupLeaveButton">ออกจากกลุ่ม</button></div><h3>สมาชิก</h3><div id="groupDetailsMembers" class="people-list"></div><p class="group-error" id="groupDetailsError" role="alert"></p></div>
     </section>
   </div>
 

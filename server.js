@@ -83,6 +83,12 @@ function directRoomId(firstUserId, secondUserId) {
   return `direct:${[firstUserId, secondUserId].sort().join(':')}`;
 }
 
+async function createSystemMessage(roomId, userId, text) {
+  const message = { id: crypto.randomUUID(), roomId, senderId: userId, senderName: 'ระบบ', text, timestamp: new Date().toISOString(), isSystem: true };
+  await db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, is_system, delivered_at) VALUES (?, ?, ?, ?, 1, datetime(\'now\'))', args: [message.id, roomId, userId, text] });
+  return message;
+}
+
 async function revokeConversation(firstUserId, secondUserId) {
   const roomId = directRoomId(firstUserId, secondUserId);
   io.to(roomId).emit('conversation-revoked');
@@ -301,20 +307,21 @@ app.get('/api/groups', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const result = await db.execute({
-      sql: `SELECT r.id, r.name,
+      sql: `SELECT r.id, r.name, r.owner_id,
           (SELECT m.text FROM messages m WHERE m.room_id = r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_text,
           (SELECT m.created_at FROM messages m WHERE m.room_id = r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_created_at,
           (SELECT COUNT(*) FROM room_members rm2 WHERE rm2.room_id = r.id) AS member_count,
-          (SELECT COUNT(*) FROM messages m WHERE m.room_id = r.id AND m.user_id <> ? AND m.read_at IS NULL) AS unread_count
+          (SELECT COUNT(*) FROM messages m WHERE m.room_id = r.id AND m.user_id <> ? AND m.is_system = 0 AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = ?)) AS unread_count
         FROM rooms r INNER JOIN room_members rm ON rm.room_id = r.id
         WHERE rm.user_id = ? AND r.id LIKE 'group:%'
         ORDER BY CASE WHEN r.id = 'group:main' THEN 0 ELSE 1 END, last_created_at DESC`,
-      args: [userId, userId]
+      args: [userId, userId, userId]
     });
     response.json({ groups: result.rows.map((row) => ({
       id: row.id,
       name: row.name,
       isGroup: true,
+      ownerId: row.owner_id || null,
       memberCount: Number(row.member_count || 0),
       lastText: row.last_text || '',
       lastCreatedAt: row.last_created_at || null,
@@ -343,6 +350,83 @@ app.get('/api/group-invites', async (request, response) => {
   }
 });
 
+async function groupMembership(groupId, userId) {
+  return db.execute({
+    sql: 'SELECT r.id, r.name, r.owner_id AS ownerId FROM rooms r INNER JOIN room_members rm ON rm.room_id = r.id WHERE r.id = ? AND rm.user_id = ? AND r.id LIKE \'group:%\'',
+    args: [groupId, userId]
+  });
+}
+
+app.get('/api/groups/:groupId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length) return response.status(403).json({ error: 'Group access denied' });
+    const members = await db.execute({
+      sql: `SELECT u.id, u.username, rm.joined_at AS joinedAt, u.id = ? AS isCurrentUser
+        FROM room_members rm INNER JOIN users u ON u.id = rm.user_id
+        WHERE rm.room_id = ? ORDER BY CASE WHEN u.id = ? THEN 0 ELSE 1 END, u.username`,
+      args: [userId, groupId, group.rows[0].ownerId]
+    });
+    response.json({ group: { ...group.rows[0], isGroup: true, memberCount: members.rows.length, isOwner: group.rows[0].ownerId === userId, members: members.rows } });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not load group details' });
+  }
+});
+
+app.post('/api/groups/:groupId/members', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  const memberIds = Array.isArray(request.body?.memberIds) ? [...new Set(request.body.memberIds.filter((id) => typeof id === 'string' && id !== userId))] : [];
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  if (!memberIds.length || memberIds.length > 100) return response.status(400).json({ error: 'Select at least one member' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length) return response.status(403).json({ error: 'Group access denied' });
+    if (group.rows[0].ownerId && group.rows[0].ownerId !== userId) return response.status(403).json({ error: 'Only the group owner can invite members' });
+    const count = await db.execute({ sql: 'SELECT COUNT(*) AS member_count FROM room_members WHERE room_id = ?', args: [groupId] });
+    const pending = await db.execute({ sql: "SELECT COUNT(*) AS invite_count FROM group_invites WHERE room_id = ? AND status = 'pending'", args: [groupId] });
+    if (Number(count.rows[0]?.member_count || 0) + Number(pending.rows[0]?.invite_count || 0) + memberIds.length > 100) return response.status(409).json({ error: 'กลุ่มนี้รองรับสมาชิกและคำเชิญรวมกันไม่เกิน 100 คน' });
+    for (const memberId of memberIds) {
+      const friendship = await db.execute({ sql: "SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'", args: [userId, memberId] });
+      if (!friendship.rows.length) return response.status(400).json({ error: 'You can only invite accepted friends' });
+      await db.execute({ sql: "INSERT OR IGNORE INTO group_invites (room_id, user_id, invited_by, status) VALUES (?, ?, ?, 'pending')", args: [groupId, memberId, userId] });
+    }
+    response.status(201).json({ invited: memberIds.length });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not invite group members' });
+  }
+});
+
+app.delete('/api/groups/:groupId/members/:memberId', async (request, response) => {
+  const userId = authenticatedUserId(request);
+  const groupId = request.params.groupId;
+  const memberId = request.params.memberId;
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  try {
+    const group = await groupMembership(groupId, userId);
+    if (!group.rows.length) return response.status(403).json({ error: 'Group access denied' });
+    if (memberId !== userId && group.rows[0].ownerId && group.rows[0].ownerId !== userId) return response.status(403).json({ error: 'Only the group owner can remove members' });
+    if (memberId === group.rows[0].ownerId) return response.status(400).json({ error: 'The owner cannot leave without transferring ownership' });
+    const member = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [memberId] });
+    const result = await db.execute({ sql: 'DELETE FROM room_members WHERE room_id = ? AND user_id = ?', args: [groupId, memberId] });
+    if (!result.rowsAffected) return response.status(404).json({ error: 'Member not found' });
+    const systemMessage = await createSystemMessage(groupId, userId, `${member.rows[0]?.username || 'สมาชิก'} ออกจากกลุ่มแล้ว`);
+    io.to(groupId).emit('chat-message', systemMessage);
+    const removedSockets = await io.in(groupId).fetchSockets();
+    removedSockets.filter((candidate) => candidate.data.userId === memberId).forEach((candidate) => {
+      candidate.emit('group-membership-revoked');
+      candidate.leave(groupId);
+      if (candidate.data.roomId === groupId) candidate.data.roomId = null;
+    });
+    response.json({ removed: true });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not remove group member' });
+  }
+});
+
 app.post('/api/groups/:groupId/respond', async (request, response) => {
   const userId = authenticatedUserId(request);
   const groupId = request.params.groupId;
@@ -359,6 +443,9 @@ app.post('/api/groups/:groupId/respond', async (request, response) => {
         { sql: 'INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', args: [groupId, userId] },
         { sql: "UPDATE group_invites SET status = 'accepted', responded_at = datetime('now') WHERE room_id = ? AND user_id = ? AND status = 'pending'", args: [groupId, userId] }
       ], 'write');
+      const user = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [userId] });
+      const systemMessage = await createSystemMessage(groupId, userId, `${user.rows[0]?.username || 'สมาชิก'} เข้าร่วมกลุ่มแล้ว`);
+      io.to(groupId).emit('chat-message', systemMessage);
     } else {
       await db.execute({ sql: "UPDATE group_invites SET status = 'declined', responded_at = datetime('now') WHERE room_id = ? AND user_id = ? AND status = 'pending'", args: [groupId, userId] });
     }
@@ -381,11 +468,12 @@ app.post('/api/groups', async (request, response) => {
       if (!friendship.rows.length) return response.status(400).json({ error: 'You can only invite accepted friends' });
     }
     const roomId = `group:${crypto.randomUUID()}`;
-    await db.execute({ sql: 'INSERT INTO rooms (id, name) VALUES (?, ?)', args: [roomId, name] });
+    await db.execute({ sql: 'INSERT INTO rooms (id, name, owner_id) VALUES (?, ?, ?)', args: [roomId, name, userId] });
     await db.batch([
       { sql: 'INSERT INTO room_members (room_id, user_id) VALUES (?, ?)', args: [roomId, userId] },
       ...memberIds.map((memberId) => ({ sql: 'INSERT INTO group_invites (room_id, user_id, invited_by) VALUES (?, ?, ?)', args: [roomId, memberId, userId] }))
     ], 'write');
+    const systemMessage = await createSystemMessage(roomId, userId, `${name} ถูกสร้างขึ้นแล้ว`);
     response.status(201).json({ group: { id: roomId, name, isGroup: true, memberCount: memberIds.length + 1, lastText: '', lastCreatedAt: null, unreadCount: 0 } });
   } catch (_error) {
     response.status(500).json({ error: 'Could not create group' });
@@ -437,20 +525,22 @@ app.get('/api/conversations/:friendId/messages', async (request, response) => {
   const before = typeof request.query.before === 'string' ? request.query.before : null;
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
-    const membership = await db.execute({
-      sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`,
-      args: [userId, friendId]
-    });
+    const isGroup = friendId.startsWith('group:');
+    const membership = await db.execute(isGroup
+      ? { sql: 'SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', args: [friendId, userId] }
+      : { sql: `SELECT 1 FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'accepted'`, args: [userId, friendId] });
     if (!membership.rows.length) return response.status(403).json({ error: 'Conversation access denied' });
+    const roomId = isGroup ? friendId : directRoomId(userId, friendId);
     const result = await db.execute({
-      sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text,
+      sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.is_system AS isSystem,
+        (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS readCount,
         m.attachment_json AS attachmentJson, m.reply_to AS replyTo, m.reaction_json AS reactionJson,
         m.delivered_at AS deliveredAt, m.read_at AS readAt, m.edited_at AS editedAt,
         m.deleted_at AS deletedAt, m.created_at AS timestamp
         FROM messages m INNER JOIN users u ON u.id = m.user_id
         WHERE m.room_id = ? AND m.deleted_at IS NULL ${before ? 'AND m.created_at < ?' : ''}
         ORDER BY m.created_at DESC LIMIT ?`,
-      args: before ? [directRoomId(userId, friendId), before, limit] : [directRoomId(userId, friendId), limit]
+      args: before ? [roomId, before, limit] : [roomId, limit]
     });
     response.json({ messages: result.rows.reverse(), hasMore: result.rows.length === limit });
   } catch (_error) {
@@ -723,7 +813,8 @@ io.on('connection', (socket) => {
       });
       if (db) {
         const history = await db.execute({
-          sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.attachment_json AS attachmentJson,
+          sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.is_system AS isSystem,
+            (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS readCount, m.attachment_json AS attachmentJson,
             m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
             m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
             FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
@@ -796,17 +887,33 @@ io.on('connection', (socket) => {
     }).catch(() => {});
   });
 
-  socket.on('read-conversation', async ({ peerId } = {}) => {
-    if (!peerId || !socket.data.roomId) return;
+  socket.on('read-conversation', async ({ peerId, roomId } = {}) => {
+    if (!socket.data.roomId || !await socketCanUseRoom()) return;
     try {
-      const roomId = directRoomId(socket.data.userId, peerId);
       const readAt = new Date().toISOString();
+      const activeRoomId = roomId?.startsWith('group:') ? roomId : (peerId ? directRoomId(socket.data.userId, peerId) : null);
+      if (!activeRoomId || activeRoomId !== socket.data.roomId) return;
+      if (activeRoomId.startsWith('group:')) {
+        const unread = await db.execute({
+          sql: `SELECT m.id FROM messages m
+            WHERE m.room_id = ? AND m.user_id <> ? AND m.is_system = 0
+              AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = ?)`,
+          args: [activeRoomId, socket.data.userId, socket.data.userId]
+        });
+        if (!unread.rows.length) return;
+        await db.batch(unread.rows.map((row) => ({
+          sql: 'INSERT OR IGNORE INTO message_reads (message_id, user_id, read_at) VALUES (?, ?, ?)',
+          args: [row.id, socket.data.userId, readAt]
+        })), 'write');
+        io.to(activeRoomId).emit('messages-read', { roomId: activeRoomId, readerId: socket.data.userId, messageIds: unread.rows.map((row) => row.id), readAt });
+        return;
+      }
       const result = await db.execute({
         sql: "UPDATE messages SET read_at = COALESCE(read_at, ?) WHERE room_id = ? AND user_id <> ? AND read_at IS NULL",
-        args: [readAt, roomId, socket.data.userId]
+        args: [readAt, activeRoomId, socket.data.userId]
       });
       if (result.rowsAffected) {
-        io.to(roomId).emit('messages-read', { roomId, readerId: socket.data.userId, readAt });
+        io.to(activeRoomId).emit('messages-read', { roomId: activeRoomId, readerId: socket.data.userId, readAt });
       }
     } catch (_error) {}
   });

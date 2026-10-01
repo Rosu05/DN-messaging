@@ -21,6 +21,7 @@ async function initializeDatabase() {
     `CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      owner_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     `CREATE TABLE IF NOT EXISTS room_members (
@@ -48,9 +49,16 @@ async function initializeDatabase() {
       reaction_json TEXT,
       delivered_at TEXT,
       read_at TEXT,
+      is_system INTEGER NOT NULL DEFAULT 0,
       edited_at TEXT,
       deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS message_reads (
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      read_at TEXT NOT NULL,
+      PRIMARY KEY (message_id, user_id)
     )`,
     `CREATE TABLE IF NOT EXISTS friendships (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -86,6 +94,7 @@ async function initializeDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     'CREATE INDEX IF NOT EXISTS messages_room_created_idx ON messages(room_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS message_reads_user_idx ON message_reads(user_id, read_at)',
     'CREATE INDEX IF NOT EXISTS uploads_user_idx ON uploads(user_id, created_at)'
   ], 'write');
 
@@ -114,6 +123,16 @@ async function initializeDatabase() {
   for (const column of ['reply_to', 'reaction_json', 'delivered_at']) {
     try {
       await db.execute(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
+    } catch (error) {
+      if (!error.message?.includes('duplicate column name')) throw error;
+    }
+  }
+  for (const [table, column, definition] of [
+    ['rooms', 'owner_id', 'TEXT'],
+    ['messages', 'is_system', 'INTEGER NOT NULL DEFAULT 0']
+  ]) {
+    try {
+      await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     } catch (error) {
       if (!error.message?.includes('duplicate column name')) throw error;
     }

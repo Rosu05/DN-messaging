@@ -41,6 +41,10 @@ const groupForm = document.getElementById('groupForm');
 const groupNameInput = document.getElementById('groupNameInput');
 const groupMembersList = document.getElementById('groupMembersList');
 const groupError = document.getElementById('groupError');
+const groupDetailsModal = document.getElementById('groupDetailsModal');
+const groupDetailsMembers = document.getElementById('groupDetailsMembers');
+const groupDetailsMeta = document.getElementById('groupDetailsMeta');
+const groupDetailsError = document.getElementById('groupDetailsError');
 const editModal = document.getElementById('editModal');
 const editForm = document.getElementById('editForm');
 const editModalTitle = document.getElementById('editModalTitle');
@@ -122,6 +126,8 @@ let emojiPickerOpen = false;
 let pendingConfirmationAction = null;
 let editModalMode = null;
 let editMessageId = null;
+let groupModalMode = 'create';
+let activeGroupId = null;
 const presenceMap = new Map();
 
 function showConfirmModal({ title, description, confirmText, onConfirm, cancelText = 'ยกเลิก' }) {
@@ -283,6 +289,11 @@ document.getElementById('groupClose').addEventListener('click', closeGroupModal)
 document.getElementById('groupCancel').addEventListener('click', closeGroupModal);
 groupModal.addEventListener('click', (event) => { if (event.target === groupModal) closeGroupModal(); });
 groupForm.addEventListener('submit', createGroup);
+document.getElementById('groupInfoButton').addEventListener('click', openGroupDetails);
+document.getElementById('groupDetailsClose').addEventListener('click', closeGroupDetails);
+groupDetailsModal.addEventListener('click', (event) => { if (event.target === groupDetailsModal) closeGroupDetails(); });
+document.getElementById('groupAddMembersButton').addEventListener('click', () => openGroupModal('invite'));
+document.getElementById('groupLeaveButton').addEventListener('click', leaveActiveGroup);
 homeButton.addEventListener('click', goToHome);
 document.getElementById('mobileBackButton').addEventListener('click', () => {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
@@ -417,6 +428,7 @@ function goToHome() {
   selectedContact = null;
   activeRoomId = null;
   closeContacts();
+  closeGroupDetails();
   closeSettings();
   profileMenu.classList.remove('visible');
   profileMenu.setAttribute('aria-hidden', 'true');
@@ -425,6 +437,7 @@ function goToHome() {
   document.getElementById('appShell').classList.remove('mobile-chat-open');
   document.getElementById('audioCallButton').disabled = false;
   document.getElementById('videoCallButton').disabled = false;
+  document.getElementById('groupInfoButton').hidden = true;
   document.getElementById('chatAvatar').textContent = '?';
   document.getElementById('chatContactName').textContent = 'เลือกเพื่อน';
   updateChatStatusText('พร้อมเริ่มการสนทนา', false);
@@ -436,9 +449,13 @@ function closeContacts() {
   contactsModal.setAttribute('aria-hidden', 'true');
 }
 
-async function openGroupModal() {
+async function openGroupModal(mode = 'create') {
+  groupModalMode = mode;
   groupError.textContent = '';
   groupNameInput.value = '';
+  document.getElementById('groupTitle').textContent = mode === 'invite' ? 'เพิ่มสมาชิกเข้ากลุ่ม' : 'สร้างแชทกลุ่ม';
+  document.querySelector('#groupForm > label').hidden = mode === 'invite';
+  document.querySelector('#groupForm .edit-submit').textContent = mode === 'invite' ? 'ส่งคำเชิญ' : 'สร้างกลุ่ม';
   groupMembersList.innerHTML = '<p class="empty-contacts">กำลังโหลดรายชื่อ...</p>';
   groupModal.classList.add('visible');
   groupModal.setAttribute('aria-hidden', 'false');
@@ -447,7 +464,7 @@ async function openGroupModal() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     groupMembersList.innerHTML = result.friends.length ? result.friends.map((friend) => `<label class="group-member-option"><input type="checkbox" value="${friend.id}"><span class="person-avatar">${escapeHtml(friend.username.slice(0, 2).toUpperCase())}</span><span><strong>${escapeHtml(friend.username)}</strong><small>${friend.online ? 'ออนไลน์' : 'ออฟไลน์'}</small></span></label>`).join('') : '<p class="empty-contacts">ต้องมีเพื่อนก่อนจึงจะสร้างกลุ่มได้</p>';
-    groupNameInput.focus();
+    (mode === 'invite' ? groupMembersList : groupNameInput).focus();
   } catch (_error) {
     groupMembersList.innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
   }
@@ -463,17 +480,65 @@ async function createGroup(event) {
   groupError.textContent = '';
   const name = groupNameInput.value.trim();
   const memberIds = [...groupMembersList.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
-  const response = await fetch('/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, memberIds }) });
+  const response = await fetch(groupModalMode === 'invite' ? `/api/groups/${encodeURIComponent(activeGroupId)}/members` : '/api/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(groupModalMode === 'invite' ? { memberIds } : { name, memberIds }) });
   const result = await response.json();
   if (!response.ok) {
     groupError.textContent = result.error || 'สร้างกลุ่มไม่สำเร็จ';
     return;
   }
   closeGroupModal();
+  if (groupModalMode === 'invite') {
+    await openGroupDetails();
+    showToast('ส่งคำเชิญแล้ว');
+    return;
+  }
   closeContacts();
   await loadConversations();
   selectConversation(result.group);
   showToast('สร้างกลุ่มแล้ว');
+}
+
+async function openGroupDetails() {
+  if (!selectedContact?.isGroup) return;
+  groupDetailsError.textContent = '';
+  const response = await fetch(`/api/groups/${encodeURIComponent(selectedContact.id)}`);
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'โหลดข้อมูลกลุ่มไม่สำเร็จ');
+  const group = result.group;
+  activeGroupId = group.id;
+  groupDetailsMeta.textContent = `${group.memberCount}/100 สมาชิก${group.isOwner ? ' • คุณเป็นเจ้าของกลุ่ม' : ''}`;
+  document.getElementById('groupAddMembersButton').hidden = Boolean(group.ownerId && !group.isOwner);
+  document.getElementById('groupLeaveButton').hidden = group.isOwner;
+  document.getElementById('groupLeaveButton').textContent = 'ออกจากกลุ่ม';
+  groupDetailsMembers.innerHTML = group.members.map((member) => `<div class="person-row"><span class="person-avatar">${escapeHtml(member.username.slice(0, 2).toUpperCase())}</span><span class="person-copy"><strong>${escapeHtml(member.username)}${member.id === group.ownerId ? ' (เจ้าของ)' : ''}</strong><small>${member.id === currentUser?.id ? 'คุณ' : 'สมาชิกกลุ่ม'}</small></span>${group.isOwner && member.id !== group.ownerId ? `<button class="contact-action remove" data-remove-group-member="${member.id}" title="ลบสมาชิก" aria-label="ลบสมาชิก"><i class="fa-solid fa-user-minus"></i></button>` : ''}</div>`).join('');
+  groupDetailsMembers.querySelectorAll('[data-remove-group-member]').forEach((button) => button.addEventListener('click', () => removeGroupMember(button.dataset.removeGroupMember)));
+  groupDetailsModal.classList.add('visible');
+  groupDetailsModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeGroupDetails() {
+  groupDetailsModal.classList.remove('visible');
+  groupDetailsModal.setAttribute('aria-hidden', 'true');
+}
+
+async function removeGroupMember(memberId) {
+  const response = await fetch(`/api/groups/${encodeURIComponent(activeGroupId)}/members/${encodeURIComponent(memberId)}`, { method: 'DELETE' });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'ลบสมาชิกไม่สำเร็จ');
+  await openGroupDetails();
+  await loadConversations();
+}
+
+async function leaveActiveGroup() {
+  if (!selectedContact?.isGroup) return;
+  if (selectedContact.ownerId === currentUser?.id) return showToast('เจ้าของกลุ่มต้องโอนสิทธิ์ก่อนออกจากกลุ่ม');
+  const response = await fetch(`/api/groups/${encodeURIComponent(selectedContact.id)}/members/${encodeURIComponent(currentUser.id)}`, { method: 'DELETE' });
+  const result = await response.json();
+  if (!response.ok) return showToast(result.error || 'ออกจากกลุ่มไม่สำเร็จ');
+  closeGroupDetails();
+  goToHome();
+  loadConversations().catch(() => {});
+  showToast('ออกจากกลุ่มแล้ว');
 }
 
 function renderPeople(elementId, people, showAddButton) {
@@ -567,6 +632,7 @@ function selectConversation(contact) {
   activeRoomId = contact.isGroup ? contact.id : `direct:${[currentUser.id, contact.id].sort().join(':')}`;
   document.getElementById('audioCallButton').disabled = Boolean(contact.isGroup);
   document.getElementById('videoCallButton').disabled = Boolean(contact.isGroup);
+  document.getElementById('groupInfoButton').hidden = !contact.isGroup;
   if (!contact.isGroup) {
     fetch(`/api/conversations/${contact.id}/read`, { method: 'POST' }).then(() => {
       if (socket.connected) socket.emit('read-conversation', { peerId: contact.id });
@@ -574,6 +640,11 @@ function selectConversation(contact) {
     }).catch(() => {});
   }
   if (socket.connected) socket.emit('join-room', contact.isGroup ? { roomId: contact.id, selectionToken: chatSelectionToken } : { peerId: contact.id, selectionToken: chatSelectionToken });
+}
+
+function markActiveConversationRead() {
+  if (!socket.connected || !selectedContact || !activeRoomId) return;
+  socket.emit('read-conversation', selectedContact.isGroup ? { roomId: activeRoomId } : { peerId: selectedContact.id });
 }
 
 function selectContact(contact) { selectConversation(contact); }
@@ -691,8 +762,12 @@ socket.on('presence-state', ({ userId, online, status }) => {
 });
 socket.on('connect_error', () => showToast('Please sign in again'));
 socket.on('room-joined', ({ participantCount }) => {
-  if (selectedContact?.isGroup) return updateChatStatusText(`${selectedContact.memberCount || 0} สมาชิก`, false);
+  if (selectedContact?.isGroup) {
+    updateChatStatusText(`${selectedContact.memberCount || 0} สมาชิก`, false);
+    return markActiveConversationRead();
+  }
   document.getElementById('chatContactStatus').textContent = participantCount > 1 ? 'ออนไลน์อยู่' : 'ออฟไลน์';
+  markActiveConversationRead();
 });
 socket.on('peer-joined', ({ username: peerName }) => showToast(`${peerName} is online`));
 socket.on('chat-history', ({ messages, selectionToken }) => {
@@ -707,6 +782,10 @@ socket.on('chat-history', ({ messages, selectionToken }) => {
   });
 });
 socket.on('chat-error', ({ message }) => showToast(message));
+socket.on('group-membership-revoked', () => {
+  goToHome();
+  showToast('คุณถูกนำออกจากกลุ่มแล้ว');
+});
 socket.on('peer-left', () => { if (callModal.classList.contains('visible')) endCall(false); });
 
 messageForm.addEventListener('submit', (event) => {
@@ -783,11 +862,9 @@ document.addEventListener('click', (event) => {
 socket.on('chat-message', (message) => {
   socket.emit('typing', { active: false });
   renderMessage(message);
-  if (selectedContact && message.senderId === selectedContact.id && socket.connected) {
-    socket.emit('read-conversation', { peerId: selectedContact.id });
-  }
+  if (selectedContact && message.roomId === activeRoomId) markActiveConversationRead();
   loadConversations().catch(() => {});
-  if (message.senderId !== currentUser?.id && (!selectedContact || message.roomId !== activeRoomId)) notifyIncomingMessage(message);
+  if (!message.isSystem && message.senderId !== currentUser?.id && (!selectedContact || message.roomId !== activeRoomId)) notifyIncomingMessage(message);
 });
 socket.on('message-edited', ({ messageId, text, editedAt }) => {
   const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
@@ -813,8 +890,19 @@ socket.on('typing', ({ active, username }) => {
   updateChatStatusText(active ? `${username} กำลังพิมพ์...` : (selectedContact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์'), Boolean(active));
 });
 
-socket.on('messages-read', ({ roomId, readerId, readAt }) => {
-  if (!roomId || !selectedContact || roomId !== activeRoomId || readerId !== selectedContact.id) return;
+socket.on('messages-read', ({ roomId, readerId, readAt, messageIds = [] }) => {
+  if (!roomId || !selectedContact || roomId !== activeRoomId) return;
+  if (selectedContact.isGroup) {
+    document.querySelectorAll('.message-row.mine').forEach((row) => {
+      if (!messageIds.includes(row.dataset.messageId)) return;
+      const readCount = Number(row.dataset.readCount || 0) + 1;
+      row.dataset.readCount = readCount;
+      const meta = row.querySelector('.message-meta');
+      if (meta) meta.textContent = formatMessageMeta(row.dataset.timestamp, true, '', false, readCount, true);
+    });
+    return;
+  }
+  if (readerId !== selectedContact.id) return;
   document.querySelectorAll('.message-row.mine').forEach((row) => {
     const timestamp = row.dataset.timestamp;
     const messageId = row.dataset.messageId;
@@ -1041,9 +1129,10 @@ function attachLongPress(target, onLongPress) {
   });
 }
 
-function formatMessageMeta(timestamp, isMine, readAt, deleted) {
+function formatMessageMeta(timestamp, isMine, readAt, deleted, readCount = 0, isGroup = false) {
   const base = formatTime(timestamp);
   if (!isMine || deleted) return base;
+  if (isGroup) return `${base} • ${readCount ? `อ่านแล้ว ${readCount} คน` : 'ส่งแล้ว'}`;
   return `${base} • ${readAt ? 'อ่านแล้ว' : 'ส่งแล้ว'}`;
 }
 
@@ -1056,15 +1145,17 @@ function applyReadStatus(row, message) {
 }
 
 function renderMessage(message) {
-  const isMine = message.senderId === currentUser?.id;
+  const isSystem = Boolean(message.isSystem || message.is_system);
+  const isMine = !isSystem && message.senderId === currentUser?.id;
   if (!selectedContact) return;
   const row = document.createElement('div');
-  row.className = `message-row${isMine ? ' mine' : ''}`;
+  row.className = isSystem ? 'message-row system-message' : `message-row${isMine ? ' mine' : ''}`;
   row.dataset.messageId = message.id;
   row.dataset.timestamp = message.timestamp;
   row.dataset.readAt = message.readAt || message.read_at || '';
+  row.dataset.readCount = message.readCount || 0;
   const bubble = document.createElement('div');
-  bubble.className = 'message-bubble';
+  bubble.className = `message-bubble${isSystem ? ' system-bubble' : ''}`;
   bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
   if (message.replyTo) {
     const replyLabel = document.createElement('small');
@@ -1091,7 +1182,7 @@ function renderMessage(message) {
   }
   const meta = document.createElement('time');
   meta.className = 'message-meta';
-  meta.textContent = formatMessageMeta(message.timestamp, isMine, message.readAt || message.read_at || row.dataset.readAt, Boolean(message.deleted));
+  meta.textContent = formatMessageMeta(message.timestamp, isMine, message.readAt || message.read_at || row.dataset.readAt, Boolean(message.deleted), Number(message.readCount || 0), Boolean(selectedContact?.isGroup));
   row.append(bubble, meta);
   if (message.reactionJson) renderReactions(row, message.reactionJson);
   if (isMine && !message.deleted) {
