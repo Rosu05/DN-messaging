@@ -49,6 +49,8 @@ const editModal = document.getElementById('editModal');
 const editForm = document.getElementById('editForm');
 const editModalTitle = document.getElementById('editModalTitle');
 const editModalError = document.getElementById('editModalError');
+const editAvatarField = document.getElementById('editAvatarField');
+const editAvatarInput = document.getElementById('editAvatarInput');
 const editUsernameField = document.getElementById('editUsernameField');
 const editEmailField = document.getElementById('editEmailField');
 const editMessageField = document.getElementById('editMessageField');
@@ -168,12 +170,17 @@ function openEditModal(mode, values = {}) {
   editMessageId = values.messageId || null;
   const isProfile = mode === 'profile';
   editModalTitle.textContent = isProfile ? 'แก้ไขโปรไฟล์' : 'แก้ไขข้อความ';
+  editAvatarField.hidden = !isProfile;
   editUsernameField.hidden = !isProfile;
   editEmailField.hidden = !isProfile;
   editMessageField.hidden = isProfile;
+  editUsernameInput.required = isProfile;
+  editEmailInput.required = isProfile;
+  editMessageInput.required = !isProfile;
   editUsernameInput.value = values.username || '';
   editEmailInput.value = values.email || '';
   editMessageInput.value = values.text || '';
+  editAvatarInput.value = '';
   editModalError.textContent = '';
   editModal.classList.add('visible');
   editModal.setAttribute('aria-hidden', 'false');
@@ -209,8 +216,20 @@ editForm.addEventListener('submit', async (event) => {
     editModalError.textContent = result.error || 'แก้ไขโปรไฟล์ไม่สำเร็จ';
     return;
   }
+  let updatedUser = result.user;
+  if (editAvatarInput.files[0]) {
+    const formData = new FormData();
+    formData.append('file', editAvatarInput.files[0]);
+    const avatarResponse = await fetch('/api/profile/avatar', { method: 'PATCH', body: formData });
+    const avatarResult = await avatarResponse.json();
+    if (!avatarResponse.ok) {
+      editModalError.textContent = avatarResult.error || 'เปลี่ยนรูปโปรไฟล์ไม่สำเร็จ';
+      return;
+    }
+    updatedUser = avatarResult.user;
+  }
   closeEditModal();
-  enterApp(result.user);
+  enterApp(updatedUser);
   showToast('อัปเดตโปรไฟล์แล้ว');
 });
 
@@ -463,7 +482,7 @@ async function openGroupModal(mode = 'create') {
     const response = await fetch('/api/contacts');
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    groupMembersList.innerHTML = result.friends.length ? result.friends.map((friend) => `<label class="group-member-option"><input type="checkbox" value="${friend.id}"><span class="person-avatar">${escapeHtml(friend.username.slice(0, 2).toUpperCase())}</span><span><strong>${escapeHtml(friend.username)}</strong><small>${friend.online ? 'ออนไลน์' : 'ออฟไลน์'}</small></span></label>`).join('') : '<p class="empty-contacts">ต้องมีเพื่อนก่อนจึงจะสร้างกลุ่มได้</p>';
+    groupMembersList.innerHTML = result.friends.length ? result.friends.map((friend) => `<label class="group-member-option"><input type="checkbox" value="${friend.id}">${avatarMarkup(friend, 'person-avatar')}<span><strong>${escapeHtml(friend.username)}</strong><small>${friend.online ? 'ออนไลน์' : 'ออฟไลน์'}</small></span></label>`).join('') : '<p class="empty-contacts">ต้องมีเพื่อนก่อนจึงจะสร้างกลุ่มได้</p>';
     (mode === 'invite' ? groupMembersList : groupNameInput).focus();
   } catch (_error) {
     groupMembersList.innerHTML = '<p class="empty-contacts">โหลดรายชื่อไม่สำเร็จ</p>';
@@ -510,7 +529,7 @@ async function openGroupDetails() {
   document.getElementById('groupAddMembersButton').hidden = Boolean(group.ownerId && !group.isOwner);
   document.getElementById('groupLeaveButton').hidden = group.isOwner;
   document.getElementById('groupLeaveButton').textContent = 'ออกจากกลุ่ม';
-  groupDetailsMembers.innerHTML = group.members.map((member) => `<div class="person-row"><span class="person-avatar">${escapeHtml(member.username.slice(0, 2).toUpperCase())}</span><span class="person-copy"><strong>${escapeHtml(member.username)}${member.id === group.ownerId ? ' (เจ้าของ)' : ''}</strong><small>${member.id === currentUser?.id ? 'คุณ' : 'สมาชิกกลุ่ม'}</small></span>${group.isOwner && member.id !== group.ownerId ? `<button class="contact-action remove" data-remove-group-member="${member.id}" title="ลบสมาชิก" aria-label="ลบสมาชิก"><i class="fa-solid fa-user-minus"></i></button>` : ''}</div>`).join('');
+  groupDetailsMembers.innerHTML = group.members.map((member) => `<div class="person-row">${avatarMarkup(member, 'person-avatar')}<span class="person-copy"><strong>${escapeHtml(member.username)}${member.id === group.ownerId ? ' (เจ้าของ)' : ''}</strong><small>${member.id === currentUser?.id ? 'คุณ' : 'สมาชิกกลุ่ม'}</small></span>${group.isOwner && member.id !== group.ownerId ? `<button class="contact-action remove" data-remove-group-member="${member.id}" title="ลบสมาชิก" aria-label="ลบสมาชิก"><i class="fa-solid fa-user-minus"></i></button>` : ''}</div>`).join('');
   groupDetailsMembers.querySelectorAll('[data-remove-group-member]').forEach((button) => button.addEventListener('click', () => removeGroupMember(button.dataset.removeGroupMember)));
   groupDetailsModal.classList.add('visible');
   groupDetailsModal.setAttribute('aria-hidden', 'false');
@@ -551,8 +570,8 @@ function renderPeople(elementId, people, showAddButton) {
     const initials = person.username.slice(0, 2).toUpperCase();
     const online = presenceMap.get(person.id) ?? person.online ?? false;
     const onlineLabel = online ? 'ออนไลน์' : 'ออฟไลน์';
-    if (showAddButton) return `<button class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}${online ? '<span class="online-dot"></span>' : ''}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><span class="add-person">เพิ่ม</span></button>`;
-    return `<div class="person-row" data-user-id="${person.id}"><span class="person-avatar">${initials}${online ? '<span class="online-dot"></span>' : ''}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><button class="contact-action remove" data-action="remove" title="ลบเพื่อน" aria-label="ลบเพื่อน"><i class="fa-solid fa-user-minus"></i></button><button class="contact-action block" data-action="block" title="บล็อกผู้ใช้" aria-label="บล็อกผู้ใช้"><i class="fa-solid fa-ban"></i></button></div>`;
+    if (showAddButton) return `<button class="person-row" data-user-id="${person.id}">${avatarMarkup(person, 'person-avatar')}${online ? '<span class="online-dot"></span>' : ''}<span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><span class="add-person">เพิ่ม</span></button>`;
+    return `<div class="person-row" data-user-id="${person.id}">${avatarMarkup(person, 'person-avatar')}${online ? '<span class="online-dot"></span>' : ''}<span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>${onlineLabel}</small></span><button class="contact-action remove" data-action="remove" title="ลบเพื่อน" aria-label="ลบเพื่อน"><i class="fa-solid fa-user-minus"></i></button><button class="contact-action block" data-action="block" title="บล็อกผู้ใช้" aria-label="บล็อกผู้ใช้"><i class="fa-solid fa-ban"></i></button></div>`;
   }).join('');
   container.querySelectorAll('.person-row').forEach((row) => {
     row.addEventListener('click', (event) => {
@@ -588,11 +607,11 @@ async function updateContact(friendId, action) {
 }
 
 function renderFriendNotes(friends) {
-  document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+  document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}">${avatarMarkup(friend, 'note-avatar')}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
 }
 
 function renderInboxNotes(friends) {
-  document.getElementById('inboxFriendNotes').innerHTML = friends.slice(0, 6).map((friend) => `<button class="inbox-note" data-note-user="${friend.id}"><span class="note-avatar">${friend.username.slice(0, 2).toUpperCase()}</span><strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+  document.getElementById('inboxFriendNotes').innerHTML = friends.slice(0, 6).map((friend) => `<button class="inbox-note" data-note-user="${friend.id}">${avatarMarkup(friend, 'note-avatar')}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
   document.querySelectorAll('.inbox-note[data-note-user]').forEach((button) => button.addEventListener('click', () => {
     const friend = friends.find((item) => item.id === button.dataset.noteUser);
     if (friend) selectContact(friend);
@@ -603,7 +622,7 @@ function renderFriendRequests(requests) {
   const section = document.getElementById('friendRequestsSection');
   document.getElementById('requestCount').textContent = requests.length ? `(${requests.length})` : '';
   section.hidden = !requests.length;
-  document.getElementById('requestsList').innerHTML = requests.map((person) => `<div class="request-row"><span class="person-avatar">${person.username.slice(0, 2).toUpperCase()}</span><span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>ต้องการเป็นเพื่อนกับคุณ</small></span><button class="request-action accept" data-request-id="${person.id}">รับ</button><button class="request-action decline" data-request-id="${person.id}">ปฏิเสธ</button></div>`).join('');
+  document.getElementById('requestsList').innerHTML = requests.map((person) => `<div class="request-row">${avatarMarkup(person, 'person-avatar')}<span class="person-copy"><strong>${escapeHtml(person.username)}</strong><small>ต้องการเป็นเพื่อนกับคุณ</small></span><button class="request-action accept" data-request-id="${person.id}">รับ</button><button class="request-action decline" data-request-id="${person.id}">ปฏิเสธ</button></div>`).join('');
   document.querySelectorAll('.request-action.accept').forEach((button) => button.addEventListener('click', () => respondToFriendRequest(button.dataset.requestId, true)));
   document.querySelectorAll('.request-action.decline').forEach((button) => button.addEventListener('click', () => respondToFriendRequest(button.dataset.requestId, false)));
 }
@@ -623,7 +642,7 @@ async function addFriend(friendId) {
 function selectConversation(contact) {
   chatSelectionToken += 1;
   selectedContact = contact;
-  document.getElementById('chatAvatar').textContent = contact.isGroup ? 'G' : contact.username.slice(0, 2).toUpperCase();
+  setAvatarElement(document.getElementById('chatAvatar'), contact, contact.isGroup ? 'G' : contact.username.slice(0, 2).toUpperCase());
   document.getElementById('chatContactName').textContent = contact.isGroup ? contact.name : contact.username;
   updateChatStatusText(contact.isGroup ? `${contact.memberCount || 0} สมาชิก` : (contact.online ? 'ออนไลน์อยู่' : 'ออฟไลน์'), false);
   clearChatArea();
@@ -663,7 +682,7 @@ function renderConversationList(conversations, groups = []) {
     container.innerHTML = '<div class="conversation-empty">ยังไม่มีประวัติแชท เลือกเพื่อนจาก Contacts เพื่อเริ่มการสนทนา</div>';
     return;
   }
-  container.innerHTML = items.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}" data-conversation-type="${person.isGroup ? 'group' : 'direct'}"><span class="avatar violet">${person.isGroup ? 'G' : person.username.slice(0, 2).toUpperCase()}${person.online ? '<span class="online-dot"></span>' : ''}</span><span class="conversation-copy"><strong>${escapeHtml(person.isGroup ? person.name : person.username)}</strong><span>${escapeHtml(person.lastText || (person.isGroup ? `${person.memberCount} สมาชิก` : 'เริ่มการสนทนา'))}</span></span>${person.unreadCount ? `<b class="unread-count">${person.unreadCount > 99 ? '99+' : person.unreadCount}</b>` : ''}<time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
+  container.innerHTML = items.map((person) => `<button class="conversation${selectedContact?.id === person.id ? ' active' : ''}" data-conversation-id="${person.id}" data-conversation-type="${person.isGroup ? 'group' : 'direct'}">${person.isGroup ? avatarMarkup({ username: person.name }, 'avatar violet') : avatarMarkup(person, 'avatar violet') }<span class="conversation-copy"><strong>${escapeHtml(person.isGroup ? person.name : person.username)}</strong><span>${escapeHtml(person.lastText || (person.isGroup ? `${person.memberCount} สมาชิก` : 'เริ่มการสนทนา'))}</span></span>${person.unreadCount ? `<b class="unread-count">${person.unreadCount > 99 ? '99+' : person.unreadCount}</b>` : ''}<time>${person.lastCreatedAt ? formatTime(person.lastCreatedAt) : ''}</time></button>`).join('');
   container.querySelectorAll('[data-conversation-id]').forEach((button) => button.addEventListener('click', async () => {
     if (button.dataset.conversationType === 'group') {
       const group = items.find((item) => item.id === button.dataset.conversationId);
@@ -686,7 +705,7 @@ function renderSearchResults(messages) {
   container.innerHTML = messages.map((message) => {
     const ids = message.roomId.split(':').slice(1);
     const friendId = ids.find((id) => id !== currentUser?.id) || '';
-    return `<button class="conversation search-result" data-search-contact="${friendId}"><span class="avatar violet">${escapeHtml(message.senderName.slice(0, 2).toUpperCase())}</span><span class="conversation-copy"><strong>${escapeHtml(message.senderName)}</strong><span>${escapeHtml(message.text)}</span></span><time>${formatTime(message.timestamp)}</time></button>`;
+    return `<button class="conversation search-result" data-search-contact="${friendId}">${avatarMarkup({ username: message.senderName, avatarUrl: message.avatarUrl }, 'avatar violet')}<span class="conversation-copy"><strong>${escapeHtml(message.senderName)}</strong><span>${escapeHtml(message.text)}</span></span><time>${formatTime(message.timestamp)}</time></button>`;
   }).join('');
   container.querySelectorAll('[data-search-contact]').forEach((button) => button.addEventListener('click', async () => {
     const response = await fetch('/api/contacts');
@@ -705,6 +724,25 @@ async function loadConversations() {
 
 function escapeHtml(value) {
   return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+}
+
+function avatarMarkup(user, className) {
+  const initials = (user.username || '?').slice(0, 2).toUpperCase();
+  const image = user.avatarUrl ? `<img src="${escapeHtml(user.avatarUrl)}" alt="">` : escapeHtml(initials);
+  return `<span class="${className}">${image}</span>`;
+}
+
+function setAvatarElement(element, user, fallback) {
+  if (!element) return;
+  element.textContent = '';
+  if (user?.avatarUrl) {
+    const image = document.createElement('img');
+    image.src = user.avatarUrl;
+    image.alt = '';
+    element.append(image);
+  } else {
+    element.textContent = fallback;
+  }
 }
 
 async function logout() {
@@ -728,13 +766,13 @@ function enterApp(user) {
   currentUser = user;
   const initials = user.username.slice(0, 1).toUpperCase();
   document.getElementById('currentUser').textContent = `Signed in as ${user.username}`;
-  document.getElementById('railAvatar').textContent = initials;
-  document.getElementById('settingsAvatar').textContent = initials;
+  setAvatarElement(document.getElementById('railAvatar'), user, initials);
+  setAvatarElement(document.getElementById('settingsAvatar'), user, initials);
   document.getElementById('settingsUsername').textContent = user.username;
   document.getElementById('mobileUsername').textContent = user.username;
-  document.getElementById('mobileNavAvatar').textContent = initials;
-  document.getElementById('noteAvatar').textContent = initials;
-  document.getElementById('inboxNoteAvatar').textContent = initials;
+  setAvatarElement(document.getElementById('mobileNavAvatar'), user, initials);
+  setAvatarElement(document.getElementById('noteAvatar'), user, initials);
+  setAvatarElement(document.getElementById('inboxNoteAvatar'), user, initials);
   refreshFriendRequestBadge();
   fetch('/api/contacts').then((response) => response.ok ? response.json() : null).then((contacts) => {
     if (contacts) renderInboxNotes(contacts.friends);

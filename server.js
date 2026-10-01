@@ -76,7 +76,7 @@ function setAuthCookie(response, user) {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, email: user.email };
+  return { id: user.id, username: user.username, email: user.email, avatarUrl: user.avatar_url || user.avatarUrl || null };
 }
 
 function directRoomId(firstUserId, secondUserId) {
@@ -110,7 +110,7 @@ function broadcastPresence(userId, online) {
 }
 
 function contactView(user) {
-  return { id: user.id, username: user.username, online: isUserOnline(user.id), status: isUserOnline(user.id) ? 'online' : 'offline' };
+  return { id: user.id, username: user.username, avatarUrl: user.avatar_url || null, online: isUserOnline(user.id), status: isUserOnline(user.id) ? 'online' : 'offline' };
 }
 
 function uploadFilenameFromUrl(url) {
@@ -146,7 +146,7 @@ app.post('/api/auth/register', authLimiter, async (request, response) => {
   }
 
   try {
-    const user = { id: crypto.randomUUID(), username: normalizedUsername, email: normalizedEmail };
+    const user = { id: crypto.randomUUID(), username: normalizedUsername, email: normalizedEmail, avatar_url: null };
     const passwordHash = await bcrypt.hash(password, 12);
     await db.execute({
       sql: 'INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)',
@@ -169,11 +169,11 @@ app.post('/api/auth/login', authLimiter, async (request, response) => {
   if (!db) return response.status(503).json({ error: 'Database is not configured' });
 
   try {
-    const result = await db.execute({ sql: 'SELECT id, username, email, password_hash FROM users WHERE username = ?', args: [normalizedUsername] });
+    const result = await db.execute({ sql: 'SELECT id, username, email, avatar_url, password_hash FROM users WHERE username = ?', args: [normalizedUsername] });
     const user = result.rows[0];
     const validPassword = user && typeof password === 'string' ? await bcrypt.compare(password, user.password_hash) : false;
     if (!validPassword) return response.status(401).json({ error: 'Username or password is incorrect' });
-    const safeUser = { id: user.id, username: user.username, email: user.email };
+    const safeUser = { id: user.id, username: user.username, email: user.email, avatar_url: user.avatar_url };
     setAuthCookie(response, safeUser);
     response.json({ user: publicUser(safeUser) });
   } catch (_error) {
@@ -185,7 +185,7 @@ app.get('/api/auth/me', async (request, response) => {
   try {
     const payload = verifyToken(getTokenFromCookie(request));
     if (!payload || !db) return response.json({ authenticated: false, user: null });
-    const result = await db.execute({ sql: 'SELECT id, username, email FROM users WHERE id = ?', args: [payload.userId] });
+    const result = await db.execute({ sql: 'SELECT id, username, email, avatar_url FROM users WHERE id = ?', args: [payload.userId] });
     const user = result.rows[0];
     response.json({ authenticated: Boolean(user), user: user ? publicUser(user) : null });
   } catch (_error) {
@@ -207,10 +207,32 @@ app.patch('/api/profile', async (request, response) => {
   if (!/^[a-zA-Z0-9_ ]{3,40}$/.test(username) || !/^\S+@\S+\.\S+$/.test(email)) return response.status(400).json({ error: 'Invalid profile details' });
   try {
     await db.execute({ sql: 'UPDATE users SET username = ?, email = ? WHERE id = ?', args: [username, email, userId] });
-    response.json({ user: { id: userId, username, email } });
+    const updated = await db.execute({ sql: 'SELECT id, username, email, avatar_url FROM users WHERE id = ?', args: [userId] });
+    response.json({ user: publicUser(updated.rows[0]) });
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT' || error.message?.includes('UNIQUE')) return response.status(409).json({ error: 'Username or email is already in use' });
     response.status(500).json({ error: 'Could not update profile' });
+  }
+});
+
+app.patch('/api/profile/avatar', uploadLimiter, (request, response, next) => {
+  const userId = authenticatedUserId(request);
+  if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
+  request.userId = userId;
+  next();
+}, upload.single('file'), async (request, response) => {
+  if (!request.file || !request.file.mimetype.startsWith('image/')) return response.status(400).json({ error: 'A profile image is required' });
+  try {
+    const avatarUrl = `/uploads/${request.file.filename}`;
+    await db.execute({
+      sql: 'INSERT INTO uploads (filename, user_id, original_name, mimetype, size) VALUES (?, ?, ?, ?, ?)',
+      args: [request.file.filename, request.userId, request.file.originalname, request.file.mimetype, request.file.size]
+    });
+    await db.execute({ sql: 'UPDATE users SET avatar_url = ? WHERE id = ?', args: [avatarUrl, request.userId] });
+    const updated = await db.execute({ sql: 'SELECT id, username, email, avatar_url FROM users WHERE id = ?', args: [request.userId] });
+    response.json({ user: publicUser(updated.rows[0]) });
+  } catch (_error) {
+    response.status(500).json({ error: 'Could not update profile image' });
   }
 });
 
@@ -240,14 +262,14 @@ app.get('/api/contacts', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const friends = await db.execute({
-      sql: `SELECT u.id, u.username FROM users u
+      sql: `SELECT u.id, u.username, u.avatar_url FROM users u
         INNER JOIN friendships f ON f.friend_id = u.id
         WHERE f.user_id = ? AND f.status = 'accepted'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
         ORDER BY u.username`, args: [userId, userId, userId]
     });
     const suggestions = await db.execute({
-      sql: `SELECT u.id, u.username FROM users u
+      sql: `SELECT u.id, u.username, u.avatar_url FROM users u
         WHERE u.id <> ? AND NOT EXISTS (
           SELECT 1 FROM friendships f WHERE (f.user_id = ? AND f.friend_id = u.id)
           OR (f.user_id = u.id AND f.friend_id = ?)
@@ -255,7 +277,7 @@ app.get('/api/contacts', async (request, response) => {
         ORDER BY u.username`, args: [userId, userId, userId, userId, userId]
     });
     const requests = await db.execute({
-      sql: `SELECT u.id, u.username FROM users u
+      sql: `SELECT u.id, u.username, u.avatar_url FROM users u
         INNER JOIN friendships f ON f.user_id = u.id
         WHERE f.friend_id = ? AND f.status = 'pending'
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
@@ -278,7 +300,7 @@ app.get('/api/conversations', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const result = await db.execute({
-      sql: `SELECT u.id, u.username,
+      sql: `SELECT u.id, u.username, u.avatar_url,
           (SELECT m.text FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_text,
           (SELECT m.created_at FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1) AS last_created_at,
           (SELECT COUNT(*) FROM messages m WHERE m.room_id = 'direct:' || CASE WHEN ? < u.id THEN ? || ':' || u.id ELSE u.id || ':' || ? END AND m.user_id <> ? AND m.read_at IS NULL) AS unread_count
@@ -365,7 +387,7 @@ app.get('/api/groups/:groupId', async (request, response) => {
     const group = await groupMembership(groupId, userId);
     if (!group.rows.length) return response.status(403).json({ error: 'Group access denied' });
     const members = await db.execute({
-      sql: `SELECT u.id, u.username, rm.joined_at AS joinedAt, u.id = ? AS isCurrentUser
+      sql: `SELECT u.id, u.username, u.avatar_url AS avatarUrl, rm.joined_at AS joinedAt, u.id = ? AS isCurrentUser
         FROM room_members rm INNER JOIN users u ON u.id = rm.user_id
         WHERE rm.room_id = ? ORDER BY CASE WHEN u.id = ? THEN 0 ELSE 1 END, u.username`,
       args: [userId, groupId, group.rows[0].ownerId]
@@ -504,7 +526,7 @@ app.get('/api/messages/search', searchLimiter, async (request, response) => {
   if (query.length < 2 || query.length > 100) return response.status(400).json({ error: 'Search query must be 2-100 characters' });
   try {
     const result = await db.execute({
-      sql: `SELECT m.id, m.room_id AS roomId, m.user_id AS senderId, u.username AS senderName,
+      sql: `SELECT m.id, m.room_id AS roomId, m.user_id AS senderId, u.username AS senderName, u.avatar_url AS avatarUrl,
         m.text, m.created_at AS timestamp
         FROM messages m INNER JOIN users u ON u.id = m.user_id
         INNER JOIN room_members rm ON rm.room_id = m.room_id
@@ -576,10 +598,12 @@ app.get('/uploads/:filename', async (request, response) => {
     const result = await db.execute({
       sql: `SELECT 1 FROM uploads u
         WHERE u.filename = ? AND (u.user_id = ? OR EXISTS (
+          SELECT 1 FROM users avatar_owner WHERE avatar_owner.avatar_url = '/uploads/' || ?
+        ) OR EXISTS (
           SELECT 1 FROM messages m INNER JOIN room_members rm ON rm.room_id = m.room_id
           WHERE rm.user_id = ? AND json_extract(m.attachment_json, '$.url') = '/uploads/' || ?
         ))`,
-      args: [filename, userId, userId, filename]
+      args: [filename, userId, filename, userId, filename]
     });
     if (!result.rows.length) return response.status(404).end();
     response.sendFile(path.join(uploadDirectory, filename));
@@ -788,8 +812,9 @@ io.on('connection', (socket) => {
       }
       let safeUsername = 'User';
       if (db) {
-        const result = await db.execute({ sql: 'SELECT username FROM users WHERE id = ?', args: [socket.data.userId] });
+        const result = await db.execute({ sql: 'SELECT username, avatar_url AS avatarUrl FROM users WHERE id = ?', args: [socket.data.userId] });
         safeUsername = result.rows[0]?.username || safeUsername;
+        socket.data.avatarUrl = result.rows[0]?.avatarUrl || null;
         if (!safeRoomId.startsWith('group:')) {
           await db.execute({ sql: 'INSERT OR IGNORE INTO rooms (id, name) VALUES (?, ?)', args: [safeRoomId, roomName] });
           await db.batch([
@@ -813,7 +838,7 @@ io.on('connection', (socket) => {
       });
       if (db) {
         const history = await db.execute({
-          sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.is_system AS isSystem,
+          sql: `SELECT m.id, m.room_id AS roomId, m.user_id AS senderId, u.username AS senderName, u.avatar_url AS avatarUrl, m.text, m.is_system AS isSystem,
             (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS readCount, m.attachment_json AS attachmentJson,
             m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
             m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
@@ -841,6 +866,7 @@ io.on('connection', (socket) => {
       roomId: roomForSocket(),
       senderId: socket.data.userId,
       senderName: socket.data.username || 'Guest',
+      avatarUrl: socket.data.avatarUrl || null,
       text: text.trim(),
       timestamp: new Date().toISOString()
     };

@@ -16,6 +16,7 @@ async function initializeDatabase() {
       username TEXT NOT NULL UNIQUE,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      avatar_url TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
     `CREATE TABLE IF NOT EXISTS rooms (
@@ -128,6 +129,7 @@ async function initializeDatabase() {
     }
   }
   for (const [table, column, definition] of [
+    ['users', 'avatar_url', 'TEXT'],
     ['rooms', 'owner_id', 'TEXT'],
     ['messages', 'is_system', 'INTEGER NOT NULL DEFAULT 0']
   ]) {
