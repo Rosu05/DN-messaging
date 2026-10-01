@@ -872,9 +872,15 @@ function escapeHtml(value) {
 
 function avatarMarkup(user, className) {
   const initials = (user.username || '?').slice(0, 2).toUpperCase();
-  const image = user.avatarUrl ? `<img src="${escapeHtml(user.avatarUrl)}" alt="">` : escapeHtml(initials);
+  const image = user.avatarUrl ? `<img src="${escapeHtml(user.avatarUrl)}" alt="" data-avatar-fallback="${escapeHtml(initials)}">` : escapeHtml(initials);
   return `<span class="${className}">${image}</span>`;
 }
+
+document.addEventListener('error', (event) => {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.dataset.avatarFallback) return;
+  image.parentElement.textContent = image.dataset.avatarFallback;
+}, true);
 
 function setAvatarElement(element, user, fallback) {
   if (!element) return;
@@ -883,6 +889,7 @@ function setAvatarElement(element, user, fallback) {
     const image = document.createElement('img');
     image.src = user.avatarUrl;
     image.alt = '';
+    image.addEventListener('error', () => { element.textContent = fallback; });
     element.append(image);
   } else {
     element.textContent = fallback;

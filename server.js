@@ -118,6 +118,23 @@ function uploadFilenameFromUrl(url) {
   return match ? match[1] : null;
 }
 
+async function normalizeAvatar(user) {
+  const filename = uploadFilenameFromUrl(user.avatar_url);
+  if (!filename) return user;
+  const filePath = path.join(uploadDirectory, filename);
+  if (!fs.existsSync(filePath)) {
+    user.avatar_url = null;
+    await db.execute({ sql: 'UPDATE users SET avatar_url = NULL WHERE id = ?', args: [user.id] });
+    return user;
+  }
+  const upload = await db.execute({ sql: 'SELECT mimetype FROM uploads WHERE filename = ? AND user_id = ?', args: [filename, user.id] });
+  const mimetype = upload.rows[0]?.mimetype || 'image/webp';
+  const avatarData = fs.readFileSync(filePath).toString('base64');
+  user.avatar_url = `data:${mimetype};base64,${avatarData}`;
+  await db.execute({ sql: 'UPDATE users SET avatar_url = ? WHERE id = ?', args: [user.avatar_url, user.id] });
+  return user;
+}
+
 function authenticatedUserId(request) {
   try {
     return verifyToken(getTokenFromCookie(request))?.userId || null;
@@ -173,7 +190,7 @@ app.post('/api/auth/login', authLimiter, async (request, response) => {
     const user = result.rows[0];
     const validPassword = user && typeof password === 'string' ? await bcrypt.compare(password, user.password_hash) : false;
     if (!validPassword) return response.status(401).json({ error: 'Username or password is incorrect' });
-    const safeUser = { id: user.id, username: user.username, email: user.email, avatar_url: user.avatar_url };
+    const safeUser = await normalizeAvatar({ id: user.id, username: user.username, email: user.email, avatar_url: user.avatar_url });
     setAuthCookie(response, safeUser);
     response.json({ user: publicUser(safeUser) });
   } catch (_error) {
@@ -187,6 +204,7 @@ app.get('/api/auth/me', async (request, response) => {
     if (!payload || !db) return response.json({ authenticated: false, user: null });
     const result = await db.execute({ sql: 'SELECT id, username, email, avatar_url FROM users WHERE id = ?', args: [payload.userId] });
     const user = result.rows[0];
+    if (user) await normalizeAvatar(user);
     response.json({ authenticated: Boolean(user), user: user ? publicUser(user) : null });
   } catch (_error) {
     response.json({ authenticated: false, user: null });
@@ -222,13 +240,16 @@ app.patch('/api/profile/avatar', uploadLimiter, (request, response, next) => {
   next();
 }, upload.single('file'), async (request, response) => {
   if (!request.file || !request.file.mimetype.startsWith('image/')) return response.status(400).json({ error: 'A profile image is required' });
+  if (request.file.size > 2 * 1024 * 1024) return response.status(400).json({ error: 'Profile image must be 2 MB or smaller' });
   try {
-    const avatarUrl = `/uploads/${request.file.filename}`;
+    const avatarData = fs.readFileSync(request.file.path).toString('base64');
+    const avatarUrl = `data:${request.file.mimetype};base64,${avatarData}`;
     await db.execute({
       sql: 'INSERT INTO uploads (filename, user_id, original_name, mimetype, size) VALUES (?, ?, ?, ?, ?)',
       args: [request.file.filename, request.userId, request.file.originalname, request.file.mimetype, request.file.size]
     });
     await db.execute({ sql: 'UPDATE users SET avatar_url = ? WHERE id = ?', args: [avatarUrl, request.userId] });
+    fs.unlinkSync(request.file.path);
     const updated = await db.execute({ sql: 'SELECT id, username, email, avatar_url FROM users WHERE id = ?', args: [request.userId] });
     response.json({ user: publicUser(updated.rows[0]) });
   } catch (_error) {
