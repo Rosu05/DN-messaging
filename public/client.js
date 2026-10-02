@@ -1408,10 +1408,10 @@ function renderMessage(message) {
   meta.textContent = formatMessageMeta(message.timestamp, isMine, message.readAt || message.read_at || row.dataset.readAt, Boolean(message.deleted), Number(message.readCount || 0), Boolean(selectedContact?.isGroup));
   row.append(bubble, meta);
   if (message.reactionJson) renderReactions(row, message.reactionJson);
-  if (isMine && !message.deleted) {
+  if (!message.deleted) {
     const tools = document.createElement('div');
     tools.className = 'message-tools';
-    tools.innerHTML = '<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="reply"><i class="fa-solid fa-reply"></i> ตอบกลับ</button><button type="button" data-message-action="react"><i class="fa-solid fa-heart"></i> ถูกใจ</button><button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button></div>';
+    tools.innerHTML = `<button type="button" class="message-more" aria-label="ตัวเลือกข้อความ" title="ตัวเลือกข้อความ"><i class="fa-solid fa-ellipsis"></i></button><div class="message-menu"><button type="button" data-message-action="reply"><i class="fa-solid fa-reply"></i> ตอบกลับ</button><button type="button" data-message-action="react"><i class="fa-solid fa-heart"></i> ถูกใจ</button>${isMine ? '<button type="button" data-message-action="edit"><i class="fa-solid fa-pen"></i> แก้ไข</button><button type="button" class="delete-message" data-message-action="delete"><i class="fa-solid fa-trash"></i> ลบ</button>' : ''}</div>`;
     tools.querySelector('.message-more').addEventListener('click', (event) => {
       event.stopPropagation();
       document.querySelectorAll('.message-tools.open').forEach((item) => { if (item !== tools) item.classList.remove('open'); });
@@ -1419,14 +1419,16 @@ function renderMessage(message) {
     });
     tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open'); });
     tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open'); });
-    tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
-      openEditModal('message', { messageId: message.id, text: message.text });
-      tools.classList.remove('open');
-    });
-    tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
-      openDeleteConfirm(message.id);
-      tools.classList.remove('open');
-    });
+    if (isMine) {
+      tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {
+        openEditModal('message', { messageId: message.id, text: message.text });
+        tools.classList.remove('open');
+      });
+      tools.querySelector('[data-message-action="delete"]').addEventListener('click', () => {
+        openDeleteConfirm(message.id);
+        tools.classList.remove('open');
+      });
+    }
     attachLongPress(bubble, () => tools.classList.add('open'));
     row.append(tools);
   }
