@@ -689,7 +689,7 @@ app.get('/uploads/:filename', async (request, response) => {
   if (!/^[A-Za-z0-9._-]+$/.test(filename)) return response.status(404).end();
   try {
     const result = await db.execute({
-      sql: `SELECT 1 FROM uploads u
+      sql: `SELECT u.original_name AS originalName, u.mimetype AS mimetype FROM uploads u
         WHERE u.filename = ? AND (u.user_id = ? OR EXISTS (
           SELECT 1 FROM users avatar_owner WHERE avatar_owner.avatar_url = '/uploads/' || ?
         ) OR EXISTS (
@@ -703,7 +703,12 @@ app.get('/uploads/:filename', async (request, response) => {
       args: [filename, userId, filename, userId, filename, userId, userId, userId, filename]
     });
     if (!result.rows.length) return response.status(404).end();
-    response.sendFile(path.join(uploadDirectory, filename));
+    const uploadRecord = result.rows[0];
+    const filePath = path.join(uploadDirectory, filename);
+    if (uploadRecord.mimetype.startsWith('image/')) {
+      return response.type(uploadRecord.mimetype).sendFile(filePath);
+    }
+    response.download(filePath, uploadRecord.originalName, { headers: { 'Content-Type': uploadRecord.mimetype } });
   } catch (_error) {
     response.status(500).end();
   }
