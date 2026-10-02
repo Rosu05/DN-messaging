@@ -754,11 +754,11 @@ async function updateContact(friendId, action) {
 }
 
 function renderFriendNotes(friends) {
-  document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}">${avatarMarkup(friend, 'note-avatar')}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+  document.getElementById('friendNotes').innerHTML = friends.slice(0, 5).map((friend) => `<button class="note-card" data-note-user="${friend.id}">${noteAvatarMarkup(friend)}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
 }
 
 function renderInboxNotes(friends) {
-  document.getElementById('inboxFriendNotes').innerHTML = friends.slice(0, 6).map((friend) => `<button class="inbox-note" data-note-user="${friend.id}">${avatarMarkup(friend, 'note-avatar')}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
+  document.getElementById('inboxFriendNotes').innerHTML = friends.slice(0, 6).map((friend) => `<button class="inbox-note" data-note-user="${friend.id}">${noteAvatarMarkup(friend)}<strong>${escapeHtml(friend.username)}</strong></button>`).join('');
   document.querySelectorAll('.inbox-note[data-note-user]').forEach((button) => button.addEventListener('click', () => {
     const friend = friends.find((item) => item.id === button.dataset.noteUser);
     if (friend) selectContact(friend);
@@ -877,6 +877,11 @@ function avatarMarkup(user, className) {
   const initials = (user.username || '?').slice(0, 2).toUpperCase();
   const image = user.avatarUrl ? `<img src="${escapeHtml(user.avatarUrl)}" alt="" data-avatar-fallback="${escapeHtml(initials)}">` : escapeHtml(initials);
   return `<span class="${className}">${image}</span>`;
+}
+
+function noteAvatarMarkup(user) {
+  const online = presenceMap.get(user.id) ?? Boolean(user.online);
+  return `<span class="note-avatar-wrap">${avatarMarkup(user, 'note-avatar')}${online ? '<span class="online-dot note-online-dot"></span>' : ''}</span>`;
 }
 
 document.addEventListener('error', (event) => {
