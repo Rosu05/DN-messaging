@@ -140,6 +140,12 @@ async function initializeDatabase() {
     }
   }
 
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO friendships (user_id, friend_id, status, created_at)
+      SELECT friend_id, user_id, status, created_at FROM friendships WHERE status = 'accepted'`,
+    args: []
+  });
+
   await db.batch([
     { sql: "INSERT OR IGNORE INTO rooms (id, name) VALUES ('group:main', 'Data Networking Community')" },
     { sql: "INSERT OR IGNORE INTO group_invites (room_id, user_id, invited_by) SELECT 'group:main', id, id FROM users WHERE id NOT IN (SELECT user_id FROM room_members WHERE room_id = 'group:main')" }
