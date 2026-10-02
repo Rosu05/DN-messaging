@@ -393,7 +393,10 @@ document.getElementById('editProfileButton').addEventListener('click', () => {
   profileMenu.setAttribute('aria-hidden', 'true');
   openEditModal('profile', { username: currentUser?.username, email: currentUser?.email });
 });
-document.getElementById('contactsButton').addEventListener('click', openContacts);
+document.getElementById('contactsButton').addEventListener('click', async () => {
+  setMessageTab('messages');
+  await openContacts();
+});
 document.getElementById('contactsClose').addEventListener('click', closeContacts);
 contactsModal.addEventListener('click', (event) => { if (event.target === contactsModal) closeContacts(); });
 document.getElementById('createGroupButton').addEventListener('click', openGroupModal);
