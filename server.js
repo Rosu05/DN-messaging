@@ -1071,11 +1071,20 @@ io.on('connection', (socket) => {
       const roomSockets = await io.in(roomForSocket()).fetchSockets();
       const targetSocket = roomSockets.find((candidate) => candidate.data.userId !== socket.data.userId);
       if (!targetSocket) return socket.emit('call-busy');
+      const connectedSockets = await io.fetchSockets();
       const active = await db.execute({
-        sql: "SELECT 1 FROM calls WHERE status IN ('ringing', 'answered') AND (caller_id = ? OR callee_id = ? OR caller_id = ? OR callee_id = ?) LIMIT 1",
+        sql: "SELECT id, status FROM calls WHERE status IN ('ringing', 'answered') AND (caller_id = ? OR callee_id = ? OR caller_id = ? OR callee_id = ?)",
         args: [targetSocket.data.userId, targetSocket.data.userId, socket.data.userId, socket.data.userId]
       });
-      if (active.rows.length) return socket.emit('call-busy');
+      const activeCallIds = new Set(connectedSockets.map((candidate) => candidate.data.callId).filter(Boolean));
+      const staleCalls = active.rows.filter((call) => !activeCallIds.has(call.id));
+      for (const staleCall of staleCalls) {
+        await db.execute({
+          sql: "UPDATE calls SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END, ended_at = datetime('now') WHERE id = ? AND status IN ('ringing', 'answered')",
+          args: [staleCall.id]
+        });
+      }
+      if (active.rows.some((call) => activeCallIds.has(call.id))) return socket.emit('call-busy');
       const callId = crypto.randomUUID();
       await db.execute({
         sql: 'INSERT INTO calls (id, room_id, caller_id, callee_id, mode, status) VALUES (?, ?, ?, ?, ?, ?)',
