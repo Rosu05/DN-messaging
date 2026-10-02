@@ -865,7 +865,7 @@ io.on('connection', (socket) => {
   broadcastPresence(socket.data.userId, true);
 
   socket.on('disconnect', () => {
-    broadcastPresence(socket.data.userId, false);
+    if (!isUserOnline(socket.data.userId)) broadcastPresence(socket.data.userId, false);
   });
 
   async function socketCanUseRoom() {
