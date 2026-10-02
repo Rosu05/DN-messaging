@@ -118,6 +118,13 @@ function uploadFilenameFromUrl(url) {
   return match ? match[1] : null;
 }
 
+function normalizeOriginalFilename(filename) {
+  if (typeof filename !== 'string') return '';
+  const decoded = Buffer.from(filename, 'latin1').toString('utf8');
+  const looksLikeMojibake = /(?:Ã.|Â.|â.|à.|ð.|Ð.|Ñ.)/.test(filename) || filename.includes('\uFFFD');
+  return looksLikeMojibake && !decoded.includes('\uFFFD') ? decoded : filename;
+}
+
 async function normalizeAvatar(user) {
   const filename = uploadFilenameFromUrl(user.avatar_url);
   if (!filename) return user;
@@ -242,11 +249,12 @@ app.patch('/api/profile/avatar', uploadLimiter, (request, response, next) => {
   if (!request.file || !request.file.mimetype.startsWith('image/')) return response.status(400).json({ error: 'A profile image is required' });
   if (request.file.size > 2 * 1024 * 1024) return response.status(400).json({ error: 'Profile image must be 2 MB or smaller' });
   try {
+    const originalName = normalizeOriginalFilename(request.file.originalname);
     const avatarData = fs.readFileSync(request.file.path).toString('base64');
     const avatarUrl = `data:${request.file.mimetype};base64,${avatarData}`;
     await db.execute({
       sql: 'INSERT INTO uploads (filename, user_id, original_name, mimetype, size) VALUES (?, ?, ?, ?, ?)',
-      args: [request.file.filename, request.userId, request.file.originalname, request.file.mimetype, request.file.size]
+      args: [request.file.filename, request.userId, originalName, request.file.mimetype, request.file.size]
     });
     await db.execute({ sql: 'UPDATE users SET avatar_url = ? WHERE id = ?', args: [avatarUrl, request.userId] });
     fs.unlinkSync(request.file.path);
@@ -661,13 +669,14 @@ app.post('/api/uploads', uploadLimiter, (request, response, next) => {
   next();
 }, upload.single('file'), async (request, response) => {
   if (!request.file) return response.status(400).json({ error: 'A supported file is required' });
+  const originalName = normalizeOriginalFilename(request.file.originalname);
   await db.execute({
     sql: 'INSERT INTO uploads (filename, user_id, original_name, mimetype, size) VALUES (?, ?, ?, ?, ?)',
-    args: [request.file.filename, request.userId, request.file.originalname, request.file.mimetype, request.file.size]
+    args: [request.file.filename, request.userId, originalName, request.file.mimetype, request.file.size]
   });
   response.status(201).json({
     url: `/uploads/${request.file.filename}`,
-    name: request.file.originalname,
+    name: originalName,
     type: request.file.mimetype,
     size: request.file.size
   });
