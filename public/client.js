@@ -8,6 +8,9 @@ let longPressGuardUntil = 0;
 const chatArea = document.getElementById('chatArea');
 const messageForm = document.getElementById('messageForm');
 const messageInput = document.getElementById('messageInput');
+const replyComposer = document.getElementById('replyComposer');
+const replyComposerSender = document.getElementById('replyComposerSender');
+const replyComposerText = document.getElementById('replyComposerText');
 const callModal = document.getElementById('callModal');
 const callTitle = document.getElementById('callTitle');
 const callStatus = document.getElementById('callStatus');
@@ -1007,9 +1010,26 @@ messageForm.addEventListener('submit', (event) => {
   if (!text || !socket.connected || !selectedContact) return;
   socket.emit('chat-message', { text, replyTo: replyToMessageId });
   messageInput.value = '';
-  replyToMessageId = null;
+  clearReplyComposer();
   messageInput.focus();
 });
+
+function clearReplyComposer() {
+  replyToMessageId = null;
+  replyComposer.hidden = true;
+  replyComposerSender.textContent = '';
+  replyComposerText.textContent = '';
+}
+
+function openReplyComposer(message) {
+  replyToMessageId = message.id;
+  replyComposerSender.textContent = message.senderName || 'ข้อความนี้';
+  replyComposerText.textContent = message.text || (message.attachment?.name || 'ไฟล์แนบ');
+  replyComposer.hidden = false;
+  messageInput.focus();
+}
+
+document.getElementById('replyComposerClose').addEventListener('click', clearReplyComposer);
 
 socket.on('message-reaction', ({ messageId, reactions }) => {
   const row = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
@@ -1421,7 +1441,7 @@ function renderMessage(message) {
       document.querySelectorAll('.message-tools.open').forEach((item) => { if (item !== tools) item.classList.remove('open'); });
       tools.classList.toggle('open');
     });
-    tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { replyToMessageId = message.id; messageInput.focus(); showToast('กำลังตอบกลับข้อความ'); tools.classList.remove('open'); });
+    tools.querySelector('[data-message-action="reply"]').addEventListener('click', () => { openReplyComposer(message); tools.classList.remove('open'); });
     tools.querySelector('[data-message-action="react"]').addEventListener('click', () => { socket.emit('react-message', { messageId: message.id, emoji: '❤️' }); tools.classList.remove('open'); });
     if (isMine) {
       tools.querySelector('[data-message-action="edit"]').addEventListener('click', () => {

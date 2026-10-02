@@ -167,6 +167,15 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .message-reactions { align-self: end; margin: 0 -8px -5px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 11px; }
 .message-reaction-button { align-self: end; padding: 2px 5px; border-radius: 10px; opacity: 0; background: var(--soft); font-size: 11px; }
 .message-row:hover .message-reaction-button { opacity: 1; }
+.message-form { flex-wrap: wrap; }
+.reply-composer { display: flex; align-items: center; justify-content: space-between; flex: 0 0 100%; min-height: 54px; padding: 8px 12px 8px 16px; border-left: 3px solid var(--purple); border-radius: 10px; background: var(--soft); }
+.reply-composer > div { display: grid; min-width: 0; gap: 2px; }
+.reply-composer span { color: var(--purple); font-size: 10px; font-weight: 700; }
+.reply-composer strong, .reply-composer small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-composer strong { font-size: 12px; }
+.reply-composer small { max-width: min(70vw, 520px); color: var(--muted); font-size: 11px; }
+.reply-composer button { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--muted); background: transparent; }
+.reply-composer button:hover { color: var(--ink); background: rgba(0, 0, 0, .06); }
 .confirm-modal { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; padding: 18px; background: rgba(8, 10, 15, .68); backdrop-filter: blur(8px); }
 .confirm-modal.visible { display: grid; animation: fade-in .16s ease both; }
 .confirm-sheet { width: min(420px, 100%); overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; color: #f4f4f6; background: linear-gradient(180deg, rgba(43,47,55,0.98), rgba(28,31,36,0.98)); box-shadow: 0 20px 60px rgba(0,0,0,.4); text-align: center; }

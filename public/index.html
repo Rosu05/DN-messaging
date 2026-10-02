@@ -97,6 +97,7 @@
       </div>
 
       <form class="message-form" id="messageForm">
+        <div class="reply-composer" id="replyComposer" hidden><div><span>กำลังตอบกลับ</span><strong id="replyComposerSender"></strong><small id="replyComposerText"></small></div><button type="button" id="replyComposerClose" aria-label="ยกเลิกการตอบกลับ" title="ยกเลิกการตอบกลับ"><i class="fa-solid fa-xmark"></i></button></div>
           <button type="button" class="attach-button" id="attachButton" title="Attach a file" aria-label="Attach a file"><i class="fa-solid fa-plus"></i></button><input type="file" id="attachmentInput" hidden>
         <div class="message-input-wrap"><input id="messageInput" autocomplete="off" maxlength="2000" placeholder="Message..." aria-label="Message"><button type="button" class="quick-button emoji-toggle" id="emojiButton" title="Send emoji" aria-label="Send emoji">😊</button><button type="submit" class="send-button" title="Send message" aria-label="Send message"><i class="fa-solid fa-arrow-up"></i></button></div>
         <div class="emoji-picker" id="emojiPicker" aria-label="Emoji picker">
