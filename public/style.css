@@ -169,6 +169,7 @@ body.dark-theme { background: #161616; }.dark-theme .app-shell { background: #20
 .message-row:hover .message-reaction-button { opacity: 1; }
 .message-form { flex-wrap: wrap; }
 .reply-composer { display: flex; align-items: center; justify-content: space-between; flex: 0 0 100%; min-height: 54px; padding: 8px 12px 8px 16px; border-left: 3px solid var(--purple); border-radius: 10px; background: var(--soft); }
+.reply-composer[hidden] { display: none; }
 .reply-composer > div { display: grid; min-width: 0; gap: 2px; }
 .reply-composer span { color: var(--purple); font-size: 10px; font-weight: 700; }
 .reply-composer strong, .reply-composer small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
