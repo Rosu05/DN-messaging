@@ -1351,6 +1351,7 @@ function applyReadStatus(row, message) {
 function renderMessage(message) {
   const isSystem = Boolean(message.isSystem || message.is_system);
   const isMine = !isSystem && message.senderId === currentUser?.id;
+  const isImageAttachment = Boolean(message.attachment?.url && message.attachment.type?.startsWith('image/'));
   if (!selectedContact) return;
   const row = document.createElement('div');
   row.className = isSystem ? 'message-row system-message' : `message-row${isMine ? ' mine' : ''}`;
@@ -1360,7 +1361,7 @@ function renderMessage(message) {
   row.dataset.readCount = message.readCount || 0;
   const bubble = document.createElement('div');
   bubble.className = `message-bubble${isSystem ? ' system-bubble' : ''}`;
-  bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : message.text;
+  bubble.textContent = message.deleted ? 'ข้อความถูกลบแล้ว' : (isImageAttachment ? '' : message.text);
   if (selectedContact.isGroup && !isSystem && !isMine && message.senderName) {
     const senderLabel = document.createElement('small');
     senderLabel.className = 'message-sender';
@@ -1378,7 +1379,7 @@ function renderMessage(message) {
     link.href = message.attachment.url;
     link.target = '_blank';
     link.rel = 'noopener';
-    if (message.attachment.type?.startsWith('image/')) {
+    if (isImageAttachment) {
       const image = document.createElement('img');
       image.className = 'message-attachment-image';
       image.src = message.attachment.url;
