@@ -686,8 +686,12 @@ app.get('/uploads/:filename', async (request, response) => {
         ) OR EXISTS (
           SELECT 1 FROM messages m INNER JOIN room_members rm ON rm.room_id = m.room_id
           WHERE rm.user_id = ? AND json_extract(m.attachment_json, '$.url') = '/uploads/' || ?
+        ) OR EXISTS (
+          SELECT 1 FROM messages m
+          WHERE m.room_id = 'direct:' || CASE WHEN m.user_id < ? THEN m.user_id || ':' || ? ELSE ? || ':' || m.user_id END
+            AND json_extract(m.attachment_json, '$.url') = '/uploads/' || ?
         ))`,
-      args: [filename, userId, filename, userId, filename]
+      args: [filename, userId, filename, userId, filename, userId, userId, userId, filename]
     });
     if (!result.rows.length) return response.status(404).end();
     response.sendFile(path.join(uploadDirectory, filename));
