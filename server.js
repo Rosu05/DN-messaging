@@ -291,7 +291,7 @@ app.get('/api/contacts', async (request, response) => {
   if (!userId || !db) return response.status(401).json({ error: 'Authentication required' });
   try {
     const friends = await db.execute({
-      sql: `SELECT u.id, u.username, u.avatar_url FROM friendships f
+      sql: `SELECT DISTINCT u.id, u.username, u.avatar_url FROM friendships f
         INNER JOIN users u ON u.id = CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END
         WHERE f.status = 'accepted' AND (f.user_id = ? OR f.friend_id = ?)
           AND NOT EXISTS (SELECT 1 FROM blocked_users b WHERE (b.user_id = ? AND b.blocked_user_id = u.id) OR (b.user_id = u.id AND b.blocked_user_id = ?))
