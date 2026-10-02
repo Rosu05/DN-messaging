@@ -648,10 +648,11 @@ app.get('/api/conversations/:friendId/messages', async (request, response) => {
     const result = await db.execute({
       sql: `SELECT m.id, m.user_id AS senderId, u.username AS senderName, m.text, m.is_system AS isSystem,
         (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS readCount,
-        m.attachment_json AS attachmentJson, m.reply_to AS replyTo, m.reaction_json AS reactionJson,
+        m.attachment_json AS attachmentJson, m.reply_to AS replyTo, rm.text AS replyText, ru.username AS replySenderName, m.reaction_json AS reactionJson,
         m.delivered_at AS deliveredAt, m.read_at AS readAt, m.edited_at AS editedAt,
         m.deleted_at AS deletedAt, m.created_at AS timestamp
         FROM messages m INNER JOIN users u ON u.id = m.user_id
+        LEFT JOIN messages rm ON rm.id = m.reply_to LEFT JOIN users ru ON ru.id = rm.user_id
         WHERE m.room_id = ? AND m.deleted_at IS NULL ${before ? 'AND m.created_at < ?' : ''}
         ORDER BY m.created_at DESC LIMIT ?`,
       args: before ? [roomId, before, limit] : [roomId, limit]
@@ -942,9 +943,11 @@ io.on('connection', (socket) => {
         const history = await db.execute({
           sql: `SELECT m.id, m.room_id AS roomId, m.user_id AS senderId, u.username AS senderName, u.avatar_url AS avatarUrl, m.text, m.is_system AS isSystem,
             (SELECT COUNT(*) FROM message_reads mr WHERE mr.message_id = m.id) AS readCount, m.attachment_json AS attachmentJson,
-            m.reply_to AS replyTo, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
+            m.reply_to AS replyTo, rm.text AS replyText, ru.username AS replySenderName, m.reaction_json AS reactionJson, m.delivered_at AS deliveredAt, m.read_at AS readAt,
             m.edited_at AS editedAt, m.deleted_at AS deletedAt, m.created_at AS timestamp
-            FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
+            FROM messages m INNER JOIN users u ON u.id = m.user_id
+            LEFT JOIN messages rm ON rm.id = m.reply_to LEFT JOIN users ru ON ru.id = rm.user_id
+            WHERE m.room_id = ? AND m.deleted_at IS NULL ORDER BY m.created_at ASC LIMIT 200`,
           args: [safeRoomId]
         });
         await db.execute({ sql: "UPDATE messages SET delivered_at = COALESCE(delivered_at, datetime('now')) WHERE room_id = ? AND user_id <> ?", args: [safeRoomId, socket.data.userId] });
@@ -981,11 +984,21 @@ io.on('connection', (socket) => {
         message.attachment = { url: `/uploads/${filename}`, ...uploadResult.rows[0] };
       }
       let safeReplyTo = null;
+      let replyText = null;
+      let replySenderName = null;
       if (typeof replyTo === 'string' && db) {
-        const replyResult = await db.execute({ sql: 'SELECT id FROM messages WHERE id = ? AND room_id = ?', args: [replyTo, roomForSocket()] });
-        if (replyResult.rows.length) safeReplyTo = replyTo;
+        const replyResult = await db.execute({ sql: 'SELECT m.id, m.text, u.username FROM messages m INNER JOIN users u ON u.id = m.user_id WHERE m.id = ? AND m.room_id = ?', args: [replyTo, roomForSocket()] });
+        if (replyResult.rows.length) {
+          safeReplyTo = replyTo;
+          replyText = replyResult.rows[0].text;
+          replySenderName = replyResult.rows[0].username;
+        }
       }
       if (safeReplyTo) message.replyTo = safeReplyTo;
+      if (replyText !== null) {
+        message.replyText = replyText;
+        message.replySenderName = replySenderName;
+      }
       await db.execute({ sql: 'INSERT INTO messages (id, room_id, user_id, text, attachment_json, reply_to, delivered_at) VALUES (?, ?, ?, ?, ?, ?, datetime(\'now\'))', args: [message.id, roomForSocket(), socket.data.userId, message.text, message.attachment ? JSON.stringify(message.attachment) : null, safeReplyTo] });
     } catch (_error) {
       return socket.emit('chat-error', { message: 'Could not send message' });

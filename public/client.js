@@ -1381,10 +1381,14 @@ function renderMessage(message) {
     bubble.prepend(senderLabel, document.createElement('br'));
   }
   if (message.replyTo) {
-    const replyLabel = document.createElement('small');
-    replyLabel.className = 'message-reply';
-    replyLabel.textContent = 'ตอบกลับข้อความ';
-    bubble.prepend(replyLabel, document.createElement('br'));
+    const replyPreview = document.createElement('div');
+    replyPreview.className = 'message-reply';
+    const replySender = document.createElement('strong');
+    replySender.textContent = message.replySenderName ? `ตอบกลับ ${message.replySenderName}` : 'ตอบกลับข้อความ';
+    const replyText = document.createElement('span');
+    replyText.textContent = message.replyText || 'ข้อความเดิม';
+    replyPreview.append(replySender, replyText);
+    bubble.prepend(replyPreview);
   }
   if (message.attachment?.url) {
     const link = document.createElement('a');
