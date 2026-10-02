@@ -1068,10 +1068,11 @@ io.on('connection', (socket) => {
     socket.data.endCallRequested = false;
     if (!await socketCanUseRoom()) return socket.emit('call-busy');
     try {
-      const roomSockets = await io.in(roomForSocket()).fetchSockets();
-      const targetSocket = roomSockets.find((candidate) => candidate.data.userId !== socket.data.userId);
-      if (!targetSocket) return socket.emit('call-busy');
+      const [, firstUserId, secondUserId] = roomForSocket().split(':');
+      const targetUserId = firstUserId === socket.data.userId ? secondUserId : firstUserId;
       const connectedSockets = await io.fetchSockets();
+      const targetSocket = connectedSockets.find((candidate) => candidate.data.userId === targetUserId);
+      if (!targetSocket) return socket.emit('call-unavailable');
       const active = await db.execute({
         sql: "SELECT id, status FROM calls WHERE status IN ('ringing', 'answered') AND (caller_id = ? OR callee_id = ? OR caller_id = ? OR callee_id = ?)",
         args: [targetSocket.data.userId, targetSocket.data.userId, socket.data.userId, socket.data.userId]

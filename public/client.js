@@ -1244,6 +1244,10 @@ socket.on('call-busy', () => {
   endCall(false);
   showToast('เพื่อนกำลังคุยสายอื่นอยู่');
 });
+socket.on('call-unavailable', () => {
+  endCall(false);
+  showToast('เพื่อนไม่ได้ออนไลน์อยู่');
+});
 
 // ICE candidates describe reachable network paths. STUN helps peers discover
 // public addresses; the media packets then flow directly over UDP when possible.
